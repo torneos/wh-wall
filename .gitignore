@@ -1,2 +1,3 @@
 builddir/
 asan.log
+*.log
