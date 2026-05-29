@@ -12,9 +12,9 @@ Native GTK4 desktop application for browsing and downloading wallpapers from [wa
 - **Thumbnails** with async loading and magic-byte validation (JPEG, PNG, WebP)
 - **Click** any thumbnail to open a preview window with image, resolution, and stats
 - **Download** — saves images with correct extension, validates file integrity
-- **Set as Background** — supports GNOME 42+ and KDE Plasma
+- **Set as Background** — supports GNOME, KDE Plasma, and hyprpaper (configurable)
 - **Copy URL** to clipboard
-- **Settings** — single dialog for API key and download path
+- **Settings** — single dialog for API key, download path, and wallpaper setter method
 - **Config persistence** — all settings and filters saved to `~/.config/wh-wall/config.json`
 - **Structured logging** — timestamps and log levels to stderr
 
@@ -42,6 +42,7 @@ ninja -C builddir
 All settings are stored in `~/.config/wh-wall/config.json`:
 
 - **API key** — enables NSFW content and higher rate limits. Get one at [wallhaven.cc/settings/account](https://wallhaven.cc/settings/account)
+- **Wallpaper setter** — choose how to apply wallpapers: Auto-detect, GNOME, KDE, or hyprpaper
 - **Download path** — where wallpapers are saved. Default: `~/Pictures/Wallpapers`
 - **Filters** — category, purity, sorting, aspect ratio, and minimum resolution are remembered between sessions
 
