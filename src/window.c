@@ -465,8 +465,34 @@ show_preview(WhApp *app, WallpaperInfo *info)
     GtkWidget *pw = gtk_window_new();
     app->preview_popover = pw;
     gtk_window_set_title(GTK_WINDOW(pw), info->id ? info->id : "Preview");
-    gtk_window_set_default_size(GTK_WINDOW(pw), 900, 675);
     gtk_window_set_resizable(GTK_WINDOW(pw), FALSE);
+
+    /* Parse resolution to fit window to image size */
+    int img_w = 900, img_h = 675;
+    if (info->resolution) {
+        int w = 0, h = 0;
+        if (sscanf(info->resolution, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+            GdkRectangle geom = {0, 0, 1920, 1080};
+            GListModel *monitors = gdk_display_get_monitors(
+                gdk_display_get_default());
+            if (monitors) {
+                GdkMonitor *mon = g_list_model_get_item(monitors, 0);
+                if (mon) {
+                    gdk_monitor_get_geometry(mon, &geom);
+                    g_object_unref(mon);
+                }
+            }
+            int max_w = geom.width  * 0.85;
+            int max_h = geom.height * 0.85;
+            double scale_w = (double)max_w / w;
+            double scale_h = (double)max_h / h;
+            double scale = scale_w < scale_h ? scale_w : scale_h;
+            if (scale < 1.0) { w = w * scale; h = h * scale; }
+            img_w = w;
+            img_h = h;
+        }
+    }
+    gtk_window_set_default_size(GTK_WINDOW(pw), img_w, img_h);
 
     /* overlay: image fills window, controls on top */
     GtkWidget *overlay = gtk_overlay_new();
