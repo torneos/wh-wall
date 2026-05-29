@@ -490,6 +490,7 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
     gtk_widget_set_size_request(picture, 250, 156);
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
     gtk_picture_set_can_shrink(GTK_PICTURE(picture), FALSE);
+    gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
     gtk_box_append(GTK_BOX(box), picture);
 
     /* load thumbnail */
@@ -1124,7 +1125,7 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_box_append(GTK_BOX(main_vbox), search_box);
 
     app->search_entry = gtk_search_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(app->search_entry),
+    gtk_text_set_placeholder_text(GTK_TEXT(app->search_entry),
                                    "Search wallpapers (e.g. nature, space, abstract)...");
     gtk_widget_set_hexpand(app->search_entry, TRUE);
     g_signal_connect(app->search_entry, "search-changed",

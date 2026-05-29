@@ -47,4 +47,3 @@ All settings are stored in `~/.config/wh-wall/config.json`:
 - **Filters** — category, purity, sorting, aspect ratio, and minimum resolution are remembered between sessions
 
 Open Settings via the ⚙ button in the header bar.
->>>>>>> 932e080 (Initial commit: GTK4 Wallhaven wallpaper browser)
