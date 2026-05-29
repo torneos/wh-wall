@@ -1079,7 +1079,8 @@ show_settings_dialog(WhApp *app, GtkWidget *parent)
     gtk_label_set_xalign(GTK_LABEL(gsk_title), 0.0);
     gtk_box_append(GTK_BOX(gsk_section), gsk_title);
 
-    GtkWidget *gsk_desc = gtk_label_new("Cairo is stable. Vulkan may be faster but can crash on some setups.");
+    GtkWidget *gsk_desc = gtk_label_new("Cairo is stable. Vulkan may be faster but can crash on some setups.\n"
+        "Requires app restart to take effect.");
     gtk_label_set_wrap(GTK_LABEL(gsk_desc), TRUE);
     gtk_label_set_xalign(GTK_LABEL(gsk_desc), 0.0);
     gtk_widget_set_opacity(gsk_desc, 0.6);
