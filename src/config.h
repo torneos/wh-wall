@@ -20,6 +20,7 @@ typedef struct {
     int   ratio_index;      /* 0-12 */
     char *min_resolution;
     int   wallpaper_method; /* 0=auto, 1=gnome, 2=kde, 3=hyprpaper */
+    int   gsk_renderer;    /* 0=cairo, 1=vulkan */
 } AppConfig;
 
 AppConfig *config_load(void);

@@ -51,6 +51,7 @@ typedef struct {
     GtkWidget   *settings_dialog;
     GtkWidget   *download_dir_entry;
     GtkWidget   *wallpaper_method_combo;
+    GtkWidget   *gsk_renderer_combo;
 
     /* current preview wallpaper data */
     WallpaperInfo *preview_wp;
@@ -876,6 +877,10 @@ on_settings_save(GtkButton *btn, gpointer user_data)
     app->config->wallpaper_method = gtk_drop_down_get_selected(
         GTK_DROP_DOWN(app->wallpaper_method_combo));
 
+    /* save GSK renderer */
+    app->config->gsk_renderer = gtk_drop_down_get_selected(
+        GTK_DROP_DOWN(app->gsk_renderer_combo));
+
     config_save(app->config);
 
     /* verify the key */
@@ -1047,6 +1052,36 @@ show_settings_dialog(WhApp *app, GtkWidget *parent)
     gtk_drop_down_set_selected(GTK_DROP_DOWN(app->wallpaper_method_combo),
                                 app->config->wallpaper_method);
     gtk_box_append(GTK_BOX(wm_section), app->wallpaper_method_combo);
+
+    /* ---- separator ---- */
+    GtkWidget *sep_mid3 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep_mid3, 12);
+    gtk_widget_set_margin_bottom(sep_mid3, 4);
+    gtk_box_append(GTK_BOX(vbox), sep_mid3);
+
+    /* ---- GSK renderer section ---- */
+    GtkWidget *gsk_section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_start(gsk_section, 20);
+    gtk_widget_set_margin_end(gsk_section, 20);
+    gtk_widget_set_margin_top(gsk_section, 12);
+    gtk_box_append(GTK_BOX(vbox), gsk_section);
+
+    GtkWidget *gsk_title = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(gsk_title), "<span weight='bold'>GSK Renderer</span>");
+    gtk_label_set_xalign(GTK_LABEL(gsk_title), 0.0);
+    gtk_box_append(GTK_BOX(gsk_section), gsk_title);
+
+    GtkWidget *gsk_desc = gtk_label_new("Cairo is stable. Vulkan may be faster but can crash on some setups.");
+    gtk_label_set_wrap(GTK_LABEL(gsk_desc), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(gsk_desc), 0.0);
+    gtk_widget_set_opacity(gsk_desc, 0.6);
+    gtk_box_append(GTK_BOX(gsk_section), gsk_desc);
+
+    static const char *gsk_options[] = { "Cairo (stable)", "Vulkan", NULL };
+    app->gsk_renderer_combo = gtk_drop_down_new_from_strings(gsk_options);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(app->gsk_renderer_combo),
+                                app->config->gsk_renderer);
+    gtk_box_append(GTK_BOX(gsk_section), app->gsk_renderer_combo);
 
     /* ---- separator ---- */
     GtkWidget *sep_bot = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);

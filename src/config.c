@@ -21,6 +21,7 @@ config_set_defaults(AppConfig *cfg)
     cfg->api_key         = NULL;
     cfg->download_dir    = NULL;
     cfg->wallpaper_method = 0;  /* auto */
+    cfg->gsk_renderer     = 0;  /* cairo */
 }
 
 AppConfig *
@@ -84,6 +85,8 @@ config_load(void)
         cfg->min_resolution = g_strdup(json_object_get_string_member(obj, "min_resolution"));
     if (json_object_has_member(obj, "wallpaper_method"))
         cfg->wallpaper_method = (int)json_object_get_int_member(obj, "wallpaper_method");
+    if (json_object_has_member(obj, "gsk_renderer"))
+        cfg->gsk_renderer = (int)json_object_get_int_member(obj, "gsk_renderer");
 
     g_object_unref(parser);
     log_info("Config loaded from config.json");
@@ -132,6 +135,9 @@ config_save(const AppConfig *cfg)
 
     json_builder_set_member_name(builder, "wallpaper_method"),
     json_builder_add_int_value(builder, cfg->wallpaper_method);
+
+    json_builder_set_member_name(builder, "gsk_renderer"),
+    json_builder_add_int_value(builder, cfg->gsk_renderer);
 
     json_builder_end_object(builder);
 
