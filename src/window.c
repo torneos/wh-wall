@@ -468,72 +468,88 @@ show_preview(WhApp *app, WallpaperInfo *info)
     gtk_window_set_default_size(GTK_WINDOW(pw), 900, 675);
     gtk_window_set_resizable(GTK_WINDOW(pw), FALSE);
 
-    GtkWidget *pop_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(pop_vbox, 12);
-    gtk_widget_set_margin_end(pop_vbox, 12);
-    gtk_widget_set_margin_top(pop_vbox, 12);
-    gtk_widget_set_margin_bottom(pop_vbox, 12);
-    gtk_window_set_child(GTK_WINDOW(pw), pop_vbox);
+    /* overlay: image fills window, controls on top */
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_window_set_child(GTK_WINDOW(pw), overlay);
 
-    /* image */
+    /* image fills entire window */
     GtkWidget *prev_img = gtk_picture_new();
-    gtk_widget_set_size_request(prev_img, 864, 540);
     gtk_picture_set_content_fit(GTK_PICTURE(prev_img), GTK_CONTENT_FIT_CONTAIN);
-    gtk_box_append(GTK_BOX(pop_vbox), prev_img);
+    gtk_picture_set_can_shrink(GTK_PICTURE(prev_img), TRUE);
+    gtk_widget_set_vexpand(prev_img, TRUE);
+    gtk_widget_set_hexpand(prev_img, TRUE);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay), prev_img);
 
-    /* resolution label */
+    /* load thumbnail */
+    if (info->thumb_url && info->thumb_url[0]) {
+        load_thumbnail(app, GTK_PICTURE(prev_img), info->thumb_url);
+    }
+
+    /* close button — top right corner */
+    GtkWidget *close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
+    gtk_widget_set_halign(close_btn, GTK_ALIGN_END);
+    gtk_widget_set_valign(close_btn, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(close_btn, 8);
+    gtk_widget_set_margin_end(close_btn, 8);
+    gtk_widget_add_css_class(close_btn, "circular");
+    gtk_widget_add_css_class(close_btn, "preview-close");
+    g_signal_connect_swapped(close_btn, "clicked",
+        G_CALLBACK(gtk_window_destroy), pw);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), close_btn);
+
+    /* bottom bar — semi-transparent background with info and buttons */
+    GtkWidget *bottom_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_valign(bottom_bar, GTK_ALIGN_END);
+    gtk_widget_add_css_class(bottom_bar, "preview-bottom-bar");
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), bottom_bar);
+
+    /* resolution + stats */
+    GtkWidget *info_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_box_append(GTK_BOX(bottom_bar), info_box);
+
     GtkWidget *res_lbl = gtk_label_new(info->resolution ? info->resolution : "");
     gtk_label_set_xalign(GTK_LABEL(res_lbl), 0.0);
-    gtk_box_append(GTK_BOX(pop_vbox), res_lbl);
+    gtk_widget_add_css_class(res_lbl, "preview-res");
+    gtk_box_append(GTK_BOX(info_box), res_lbl);
 
-    /* info label */
-    char *info_text = g_strdup_printf(
-        "Favorites: %d  •  Views: %d", info->favorites, info->views);
+    char *info_text = g_strdup_printf("♥ %d  •  👁 %d", info->favorites, info->views);
     GtkWidget *info_lbl = gtk_label_new(info_text);
     gtk_label_set_xalign(GTK_LABEL(info_lbl), 0.0);
-    gtk_box_append(GTK_BOX(pop_vbox), info_lbl);
+    gtk_widget_add_css_class(info_lbl, "preview-stats");
+    gtk_box_append(GTK_BOX(info_box), info_lbl);
     g_free(info_text);
 
-    /* progress bar (hidden until download starts) */
+    /* spacer */
+    GtkWidget *spacer = gtk_label_new("");
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(bottom_bar), spacer);
+
+    /* progress bar */
     GtkWidget *dl_progress = gtk_progress_bar_new();
     gtk_widget_set_visible(dl_progress, FALSE);
-    gtk_box_append(GTK_BOX(pop_vbox), dl_progress);
+    gtk_widget_set_size_request(dl_progress, 120, -1);
+    gtk_box_append(GTK_BOX(bottom_bar), dl_progress);
     g_object_set_data(G_OBJECT(pw), "dl-progress", dl_progress);
 
-    /* buttons */
-    GtkWidget *pop_bbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_halign(pop_bbox, GTK_ALIGN_END);
-    gtk_widget_set_margin_top(pop_bbox, 8);
-    gtk_box_append(GTK_BOX(pop_vbox), pop_bbox);
-
+    /* action buttons */
     GtkWidget *copy_btn = gtk_button_new_with_label("Copy URL");
     g_signal_connect(copy_btn, "clicked", G_CALLBACK(on_preview_copy), app);
-    gtk_box_append(GTK_BOX(pop_bbox), copy_btn);
+    gtk_box_append(GTK_BOX(bottom_bar), copy_btn);
 
     GtkWidget *dl_btn2 = gtk_button_new_with_label("Download");
     g_signal_connect(dl_btn2, "clicked", G_CALLBACK(on_preview_download), app);
-    gtk_box_append(GTK_BOX(pop_bbox), dl_btn2);
+    gtk_box_append(GTK_BOX(bottom_bar), dl_btn2);
 
     GtkWidget *bg_btn = gtk_button_new_with_label("Set as Background");
     gtk_widget_add_css_class(bg_btn, "suggested-action");
     g_signal_connect(bg_btn, "clicked", G_CALLBACK(on_preview_set_bg), app);
-    gtk_box_append(GTK_BOX(pop_bbox), bg_btn);
-
-    GtkWidget *close_btn = gtk_button_new_with_label("Close");
-    g_signal_connect_swapped(close_btn, "clicked",
-        G_CALLBACK(gtk_window_destroy), pw);
-    gtk_box_append(GTK_BOX(pop_bbox), close_btn);
+    gtk_box_append(GTK_BOX(bottom_bar), bg_btn);
 
     /* Clean up when preview window is destroyed */
     g_signal_connect_data(pw, "destroy",
         G_CALLBACK(on_preview_destroy),
         g_memdup2(&app->preview_popover, sizeof(gpointer)),
         (GClosureNotify)g_free, 0);
-
-    /* load thumbnail */
-    if (info->thumb_url && info->thumb_url[0]) {
-        load_thumbnail(app, GTK_PICTURE(prev_img), info->thumb_url);
-    }
 
     gtk_window_present(GTK_WINDOW(pw));
 }
@@ -1281,7 +1297,15 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
         "  background: linear-gradient(to top, alpha(black, 0.65), transparent);"
         "}"
         ".thumb-res { font-size: 0.8em; color: white; }"
-        ".thumb-stat { font-size: 0.75em; color: rgba(255,255,255,0.7); }");
+        ".thumb-stat { font-size: 0.75em; color: rgba(255,255,255,0.7); }"
+        ".preview-close { background: alpha(black, 0.45); color: white; min-width: 36px; min-height: 36px; }"
+        ".preview-close:hover { background: alpha(red, 0.7); }"
+        ".preview-bottom-bar {"
+        "  padding: 10px 16px;"
+        "  background: linear-gradient(to top, alpha(black, 0.75), alpha(black, 0.4), transparent);"
+        "}"
+        ".preview-res { color: white; font-size: 1.1em; font-weight: bold; }"
+        ".preview-stats { color: rgba(255,255,255,0.65); font-size: 0.85em; }");
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
         GTK_STYLE_PROVIDER(css),
