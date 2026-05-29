@@ -305,27 +305,111 @@ load_thumbnail(WhApp *app, GtkPicture *picture, const char *url)
 }
 
 /* ------------------------------------------------------------------ */
-/* preview popover                                                     */
+/* preview popover download (async)                                    */
 /* ------------------------------------------------------------------ */
+static WallpaperInfo *
+wallpaper_info_copy(const WallpaperInfo *src)
+{
+    if (!src) return NULL;
+    WallpaperInfo *info = g_new0(WallpaperInfo, 1);
+    info->id         = g_strdup(src->id);
+    info->url        = g_strdup(src->url);
+    info->thumb_url  = g_strdup(src->thumb_url);
+    info->resolution = g_strdup(src->resolution);
+    info->category   = g_strdup(src->category);
+    info->purity     = g_strdup(src->purity);
+    info->favorites  = src->favorites;
+    info->views      = src->views;
+    return info;
+}
+
+typedef struct {
+    WhApp          *app;
+    WallpaperInfo  *info;
+    GtkWidget      *progress;
+    GtkWidget      *window;
+    GtkWidget      *status_label;
+    bool           set_bg;
+} DownloadTask;
+
+static void
+download_task_free(DownloadTask *dt)
+{
+    wallpaper_info_free(dt->info);
+    g_free(dt);
+}
+
+static void
+download_thread_func(GTask *task, gpointer source, gpointer task_data,
+                     GCancellable *cancellable)
+{
+    DownloadTask *dt = task_data;
+    ensure_download_dir(dt->app);
+    bool ok = wallpaper_download(dt->info, dt->app->config->download_dir,
+                                  GTK_PROGRESS_BAR(dt->progress));
+    g_task_return_boolean(task, ok);
+}
+
+static void
+on_download_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+    DownloadTask *dt = user_data;
+    gboolean ok = g_task_propagate_boolean(G_TASK(res), NULL);
+
+    gtk_widget_set_visible(dt->progress, FALSE);
+
+    if (ok) {
+        if (dt->set_bg) {
+            char *path = wallpaper_get_path(dt->info,
+                                             dt->app->config->download_dir);
+            wallpaper_set_as_background(path, dt->app->config->wallpaper_method);
+            g_free(path);
+        }
+        char *msg = g_strdup_printf("Downloaded to %s",
+                                     dt->app->config->download_dir);
+        gtk_label_set_text(GTK_LABEL(dt->status_label), msg);
+        g_free(msg);
+    } else {
+        gtk_label_set_text(GTK_LABEL(dt->status_label), "Download failed.");
+    }
+
+    download_task_free(dt);
+}
+
+static void
+start_async_download(WhApp *app, bool set_bg)
+{
+    if (!app->preview_wp || !app->preview_wp->url) return;
+
+    GtkWidget *progress = g_object_get_data(G_OBJECT(app->preview_popover),
+                                             "dl-progress");
+    if (progress) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(progress), 0.0);
+        gtk_widget_set_visible(progress, TRUE);
+    }
+
+    DownloadTask *dt = g_new0(DownloadTask, 1);
+    dt->app          = app;
+    dt->info         = wallpaper_info_copy(app->preview_wp);
+    dt->progress     = progress;
+    dt->window       = app->preview_popover;
+    dt->status_label = app->status_label;
+    dt->set_bg       = set_bg;
+
+    GCancellable *cancellable = g_cancellable_new();
+    GTask *task = g_task_new(NULL, cancellable, on_download_done, dt);
+    g_task_set_task_data(task, dt, (GDestroyNotify)download_task_free);
+    g_task_run_in_thread(task, download_thread_func);
+    g_object_unref(task);
+    g_object_unref(cancellable);
+}
+
 static void
 on_preview_set_bg(GtkButton *btn, gpointer user_data)
 {
     (void)btn;
     WhApp *app = user_data;
-    if (!app->preview_wp || !app->preview_wp->url) return;
-
-    ensure_download_dir(app);
-    if (!wallpaper_download(app->preview_wp, app->config->download_dir)) {
-        gtk_label_set_text(GTK_LABEL(app->status_label), "Download failed.");
-        gtk_window_destroy(GTK_WINDOW(app->preview_popover));
-        return;
-    }
-
-    char *path = wallpaper_get_path(app->preview_wp, app->config->download_dir);
-    wallpaper_set_as_background(path, app->config->wallpaper_method);
-    g_free(path);
-
-    gtk_window_destroy(GTK_WINDOW(app->preview_popover));
+    start_async_download(app, TRUE);
 }
 
 static void
@@ -333,19 +417,7 @@ on_preview_download(GtkButton *btn, gpointer user_data)
 {
     (void)btn;
     WhApp *app = user_data;
-    if (!app->preview_wp || !app->preview_wp->url) return;
-
-    ensure_download_dir(app);
-    log_info("Download: id=%s url=%s", app->preview_wp->id, app->preview_wp->url);
-    if (wallpaper_download(app->preview_wp, app->config->download_dir)) {
-        char *msg = g_strdup_printf("Downloaded to %s", app->config->download_dir);
-        gtk_label_set_text(GTK_LABEL(app->status_label), msg);
-        g_free(msg);
-    } else {
-        gtk_label_set_text(GTK_LABEL(app->status_label), "Download failed.");
-    }
-
-    gtk_window_destroy(GTK_WINDOW(app->preview_popover));
+    start_async_download(app, FALSE);
 }
 
 static void
@@ -365,20 +437,10 @@ on_preview_copy(GtkButton *btn, gpointer user_data)
     gtk_window_destroy(GTK_WINDOW(app->preview_popover));
 }
 
-static WallpaperInfo *
-wallpaper_info_copy(const WallpaperInfo *src)
+static void
+on_preview_destroy(gpointer data)
 {
-    if (!src) return NULL;
-    WallpaperInfo *info = g_new0(WallpaperInfo, 1);
-    info->id         = g_strdup(src->id);
-    info->url        = g_strdup(src->url);
-    info->thumb_url  = g_strdup(src->thumb_url);
-    info->resolution = g_strdup(src->resolution);
-    info->category   = g_strdup(src->category);
-    info->purity     = g_strdup(src->purity);
-    info->favorites  = src->favorites;
-    info->views      = src->views;
-    return info;
+    *(GtkWidget **)data = NULL;
 }
 
 static void
@@ -427,6 +489,12 @@ show_preview(WhApp *app, WallpaperInfo *info)
     gtk_box_append(GTK_BOX(pop_vbox), info_lbl);
     g_free(info_text);
 
+    /* progress bar (hidden until download starts) */
+    GtkWidget *dl_progress = gtk_progress_bar_new();
+    gtk_widget_set_visible(dl_progress, FALSE);
+    gtk_box_append(GTK_BOX(pop_vbox), dl_progress);
+    g_object_set_data(G_OBJECT(pw), "dl-progress", dl_progress);
+
     /* buttons */
     GtkWidget *pop_bbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_halign(pop_bbox, GTK_ALIGN_END);
@@ -450,6 +518,12 @@ show_preview(WhApp *app, WallpaperInfo *info)
     g_signal_connect_swapped(close_btn, "clicked",
         G_CALLBACK(gtk_window_destroy), pw);
     gtk_box_append(GTK_BOX(pop_bbox), close_btn);
+
+    /* Clean up when preview window is destroyed */
+    g_signal_connect_data(pw, "destroy",
+        G_CALLBACK(on_preview_destroy),
+        g_memdup2(&app->preview_popover, sizeof(gpointer)),
+        (GClosureNotify)g_free, 0);
 
     /* load thumbnail */
     if (info->thumb_url && info->thumb_url[0]) {

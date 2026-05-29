@@ -1,6 +1,7 @@
 #include "wallpaper.h"
 #include "log.h"
 #include <curl/curl.h>
+#include <gtk/gtk.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,14 +12,42 @@
 /* download                                                            */
 /* ------------------------------------------------------------------ */
 typedef struct {
-    FILE *fp;
+    FILE          *fp;
+    GtkProgressBar *progress;
+    curl_off_t    total;
+    curl_off_t    now;
 } DownloadCtx;
 
 static size_t
 download_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
     DownloadCtx *ctx = userdata;
-    return fwrite(ptr, size, nmemb, ctx->fp);
+    size_t written = fwrite(ptr, size, nmemb, ctx->fp);
+    ctx->now += written;
+    return written;
+}
+
+static int
+download_progress_cb(void *userdata, curl_off_t dltotal, curl_off_t dlnow,
+                     curl_off_t ultotal, curl_off_t ulnow)
+{
+    (void)ultotal; (void)ulnow;
+    DownloadCtx *ctx = userdata;
+    ctx->total = dltotal;
+    ctx->now   = dlnow;
+    return 0;
+}
+
+static gboolean
+update_progress_bar(gpointer user_data)
+{
+    DownloadCtx *ctx = user_data;
+    if (ctx->progress && ctx->total > 0) {
+        double frac = (double)ctx->now / (double)ctx->total;
+        if (frac > 1.0) frac = 1.0;
+        gtk_progress_bar_set_fraction(ctx->progress, frac);
+    }
+    return G_SOURCE_CONTINUE;
 }
 
 char *
@@ -49,7 +78,8 @@ wallpaper_get_path(WallpaperInfo *info, const char *dest_dir)
 }
 
 bool
-wallpaper_download(WallpaperInfo *info, const char *dest_dir)
+wallpaper_download(WallpaperInfo *info, const char *dest_dir,
+                    GtkProgressBar *progress)
 {
     if (!info || !info->url || !dest_dir) return FALSE;
 
@@ -65,8 +95,12 @@ wallpaper_download(WallpaperInfo *info, const char *dest_dir)
     }
 
     CURL        *curl = curl_easy_init();
-    DownloadCtx  ctx  = {NULL};
+    DownloadCtx  ctx  = {NULL, progress, 0, 0};
     CURLcode     res  = CURLE_FAILED_INIT;
+    guint        timer_id = 0;
+
+    if (progress)
+        timer_id = g_timeout_add(100, update_progress_bar, &ctx);
 
     if (curl) {
         ctx.fp = fopen(filename, "wb");
@@ -80,6 +114,9 @@ wallpaper_download(WallpaperInfo *info, const char *dest_dir)
             curl_easy_setopt(curl, CURLOPT_URL, dl_url);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, download_write_cb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, download_progress_cb);
+            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
             curl_easy_setopt(curl, CURLOPT_USERAGENT,
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 wh-wall/0.1");
@@ -102,6 +139,13 @@ wallpaper_download(WallpaperInfo *info, const char *dest_dir)
     } else {
         log_error("curl_easy_init() failed for download");
     }
+
+    if (timer_id)
+        g_source_remove(timer_id);
+
+    /* set progress to 100% on completion */
+    if (progress)
+        gtk_progress_bar_set_fraction(progress, 1.0);
 
     g_free(api_url);
     g_free(key);
