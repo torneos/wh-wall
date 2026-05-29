@@ -623,10 +623,12 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
 
     /* picture fills the entire overlay */
     GtkWidget *picture = gtk_picture_new();
-    gtk_widget_set_size_request(picture, pic_w, pic_h);
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
     gtk_picture_set_can_shrink(GTK_PICTURE(picture), FALSE);
     gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
+    gtk_widget_set_size_request(picture, pic_w, pic_h);
+    gtk_widget_set_halign(picture, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(picture, GTK_ALIGN_FILL);
     gtk_overlay_set_child(GTK_OVERLAY(overlay), picture);
 
     /* load thumbnail */
@@ -1472,12 +1474,12 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_box_append(GTK_BOX(main_vbox), scrolled);
 
     app->flowbox = gtk_flow_box_new();
-    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(app->flowbox), 2);
-    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(app->flowbox), 10);
+    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(app->flowbox), 3);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(app->flowbox), 99);
     gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(app->flowbox), GTK_SELECTION_NONE);
     gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(app->flowbox), FALSE);
-    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(app->flowbox), 12);
-    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(app->flowbox), 12);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(app->flowbox), 10);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(app->flowbox), 10);
 
     /* overlay spinner on flowbox */
     GtkWidget *overlay = gtk_overlay_new();
