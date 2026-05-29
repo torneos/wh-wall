@@ -558,21 +558,22 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
     GtkWidget *btn = gtk_button_new();
     gtk_widget_add_css_class(btn, "thumbnail-btn");
 
-    /* Calculate height from width (270) and selected ratio */
+    /* Calculate height from width (180) and selected ratio */
     int ratio_idx = get_ratio_index(app);
-    int pic_h = 170; /* default */
-    if (ratio_idx == 1)  pic_h = 152; /* 16:9 */
-    else if (ratio_idx == 2)  pic_h = 169; /* 16:10 */
-    else if (ratio_idx == 3)  pic_h = 116; /* 21:9 */
-    else if (ratio_idx == 4)  pic_h = 76;  /* 32:9 */
-    else if (ratio_idx == 5)  pic_h = 51;  /* 48:9 */
-    else if (ratio_idx == 6)  pic_h = 480; /* 9:16 */
-    else if (ratio_idx == 7)  pic_h = 432; /* 10:16 */
-    else if (ratio_idx == 8)  pic_h = 540; /* 9:18 */
-    else if (ratio_idx == 9)  pic_h = 270; /* 1:1 */
-    else if (ratio_idx == 10) pic_h = 180; /* 3:2 */
-    else if (ratio_idx == 11) pic_h = 203; /* 4:3 */
-    else if (ratio_idx == 12) pic_h = 216; /* 5:4 */
+    int pic_w = 180;
+    int pic_h = 113; /* default ~16:10 */
+    if (ratio_idx == 1)      pic_h = 101; /* 16:9 */
+    else if (ratio_idx == 2)  pic_h = 113; /* 16:10 */
+    else if (ratio_idx == 3)  pic_h = 77;  /* 21:9 */
+    else if (ratio_idx == 4)  pic_h = 51;  /* 32:9 */
+    else if (ratio_idx == 5)  pic_h = 34;  /* 48:9 */
+    else if (ratio_idx == 6)  pic_h = 320; /* 9:16 */
+    else if (ratio_idx == 7)  pic_h = 288; /* 10:16 */
+    else if (ratio_idx == 8)  pic_h = 360; /* 9:18 */
+    else if (ratio_idx == 9)  pic_h = 180; /* 1:1 */
+    else if (ratio_idx == 10) pic_h = 120; /* 3:2 */
+    else if (ratio_idx == 11) pic_h = 135; /* 4:3 */
+    else if (ratio_idx == 12) pic_h = 144; /* 5:4 */
 
     /* overlay: picture + semi-transparent info bar on top */
     GtkWidget *overlay = gtk_overlay_new();
@@ -580,7 +581,7 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
 
     /* picture fills the entire overlay */
     GtkWidget *picture = gtk_picture_new();
-    gtk_widget_set_size_request(picture, 270, pic_h);
+    gtk_widget_set_size_request(picture, pic_w, pic_h);
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
     gtk_picture_set_can_shrink(GTK_PICTURE(picture), FALSE);
     gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
