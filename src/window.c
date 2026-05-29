@@ -518,6 +518,14 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
                            (GDestroyNotify)wallpaper_info_free);
     g_signal_connect(btn, "clicked", G_CALLBACK(on_thumb_button_clicked), app);
 
+    /* purity border: sfw=none, sketchy=yellow, nsfw=red */
+    if (info->purity) {
+        if (g_strcmp0(info->purity, "sketchy") == 0)
+            gtk_widget_add_css_class(btn, "purity-sketchy");
+        else if (g_strcmp0(info->purity, "nsfw") == 0)
+            gtk_widget_add_css_class(btn, "purity-nsfw");
+    }
+
     return btn;
 }
 
@@ -1134,6 +1142,17 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     app->window = win;
     gtk_window_set_title(GTK_WINDOW(win), "wh-wall — Wallhaven Browser");
     gtk_window_set_default_size(GTK_WINDOW(win), 1100, 750);
+
+    /* ---- CSS provider for purity borders ---- */
+    GtkCssProvider *css = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(css,
+        ".purity-sketchy { border: 1px solid rgba(180,160,40,0.7); border-radius: 4px; }"
+        ".purity-nsfw    { border: 1px solid rgba(180,50,50,0.7);  border-radius: 4px; }");
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(),
+        GTK_STYLE_PROVIDER(css),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(css);
 
     /* main vertical box */
     GtkWidget *main_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
