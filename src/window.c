@@ -70,9 +70,9 @@ static const char *
 get_purity_string(WhApp *app)
 {
     static char pur[4];
-    pur[0] = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->pur_sfw))     ? '1' : '0';
-    pur[1] = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->pur_sketchy)) ? '1' : '0';
-    pur[2] = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->pur_nsfw))    ? '1' : '0';
+    pur[0] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->pur_sfw))     ? '1' : '0';
+    pur[1] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->pur_sketchy)) ? '1' : '0';
+    pur[2] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->pur_nsfw))    ? '1' : '0';
     pur[3] = '\0';
     return pur;
 }
@@ -81,9 +81,9 @@ static const char *
 get_category_string(WhApp *app)
 {
     static char cat[4];
-    cat[0] = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->cat_general)) ? '1' : '0';
-    cat[1] = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->cat_anime))   ? '1' : '0';
-    cat[2] = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->cat_people))  ? '1' : '0';
+    cat[0] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->cat_general)) ? '1' : '0';
+    cat[1] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->cat_anime))   ? '1' : '0';
+    cat[2] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->cat_people))  ? '1' : '0';
     cat[3] = '\0';
     return cat;
 }
@@ -482,8 +482,8 @@ show_preview(WhApp *app, WallpaperInfo *info)
                     g_object_unref(mon);
                 }
             }
-            int max_w = geom.width  * 0.85;
-            int max_h = geom.height * 0.85;
+            int max_w = geom.width  * 0.65;
+            int max_h = geom.height * 0.65;
             double scale_w = (double)max_w / w;
             double scale_h = (double)max_h / h;
             double scale = scale_w < scale_h ? scale_w : scale_h;
@@ -907,12 +907,12 @@ static void
 save_filters_to_config(WhApp *app)
 {
     AppConfig *cfg = app->config;
-    cfg->cat_general     = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->cat_general));
-    cfg->cat_anime       = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->cat_anime));
-    cfg->cat_people      = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->cat_people));
-    cfg->pur_sfw         = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->pur_sfw));
-    cfg->pur_sketchy     = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->pur_sketchy));
-    cfg->pur_nsfw        = gtk_check_button_get_active(GTK_CHECK_BUTTON(app->pur_nsfw));
+    cfg->cat_general     = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->cat_general));
+    cfg->cat_anime       = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->cat_anime));
+    cfg->cat_people      = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->cat_people));
+    cfg->pur_sfw         = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->pur_sfw));
+    cfg->pur_sketchy     = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->pur_sketchy));
+    cfg->pur_nsfw        = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app->pur_nsfw));
     cfg->sort_index      = gtk_drop_down_get_selected(GTK_DROP_DOWN(app->sort_combo));
     cfg->top_range_index = gtk_drop_down_get_selected(GTK_DROP_DOWN(app->top_range_combo));
     cfg->ratio_index     = gtk_drop_down_get_selected(GTK_DROP_DOWN(app->ratio_combo));
@@ -948,7 +948,7 @@ on_top_range_changed(GtkDropDown *dd, GParamSpec *pspec, gpointer user_data)
 }
 
 static void
-on_category_toggled(GtkCheckButton *btn, gpointer user_data)
+on_category_toggled(GtkToggleButton *btn, gpointer user_data)
 {
     WhApp *app = user_data;
     save_filters_to_config(app);
@@ -1331,7 +1331,11 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
         "  background: linear-gradient(to top, alpha(black, 0.75), alpha(black, 0.4), transparent);"
         "}"
         ".preview-res { color: white; font-size: 1.1em; font-weight: bold; }"
-        ".preview-stats { color: rgba(255,255,255,0.65); font-size: 0.85em; }");
+        ".preview-stats { color: rgba(255,255,255,0.65); font-size: 0.85em; }"
+        ".filter-bar { background: alpha(currentColor, 0.04); border-bottom: 1px solid alpha(currentColor, 0.06); }"
+        ".filter-bar button.toggle { padding: 4px 12px; border-radius: 99px; font-size: 0.85em; }"
+        ".tag-sketchy { color: #b8a028; }"
+        ".tag-nsfw { color: #b43232; }");
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
         GTK_STYLE_PROVIDER(css),
@@ -1376,62 +1380,49 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_box_append(GTK_BOX(search_box), search_btn);
 
     /* ---- filter bar ---- */
-    GtkWidget *filter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    gtk_widget_set_margin_start(filter_box, 12);
-    gtk_widget_set_margin_end(filter_box, 12);
-    gtk_widget_set_margin_bottom(filter_box, 8);
+    GtkWidget *filter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_start(filter_box, 10);
+    gtk_widget_set_margin_end(filter_box, 10);
+    gtk_widget_set_margin_top(filter_box, 4);
+    gtk_widget_set_margin_bottom(filter_box, 6);
+    gtk_widget_add_css_class(filter_box, "filter-bar");
     gtk_box_append(GTK_BOX(main_vbox), filter_box);
 
-    /* categories */
-    GtkWidget *cat_label = gtk_label_new("Categories:");
-    gtk_box_append(GTK_BOX(filter_box), cat_label);
-
-    app->cat_general = gtk_check_button_new_with_label("General");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(app->cat_general), cfg->cat_general);
+    /* categories — toggle buttons */
+    app->cat_general = gtk_toggle_button_new_with_label("General");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->cat_general), cfg->cat_general);
     g_signal_connect(app->cat_general, "toggled", G_CALLBACK(on_category_toggled), app);
     gtk_box_append(GTK_BOX(filter_box), app->cat_general);
 
-    app->cat_anime = gtk_check_button_new_with_label("Anime");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(app->cat_anime), cfg->cat_anime);
+    app->cat_anime = gtk_toggle_button_new_with_label("Anime");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->cat_anime), cfg->cat_anime);
     g_signal_connect(app->cat_anime, "toggled", G_CALLBACK(on_category_toggled), app);
     gtk_box_append(GTK_BOX(filter_box), app->cat_anime);
 
-    app->cat_people = gtk_check_button_new_with_label("People");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(app->cat_people), cfg->cat_people);
+    app->cat_people = gtk_toggle_button_new_with_label("People");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->cat_people), cfg->cat_people);
     g_signal_connect(app->cat_people, "toggled", G_CALLBACK(on_category_toggled), app);
     gtk_box_append(GTK_BOX(filter_box), app->cat_people);
 
-    /* separator */
-    GtkWidget *sep1 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
-    gtk_box_append(GTK_BOX(filter_box), sep1);
-
-    /* purity */
-    GtkWidget *pur_label = gtk_label_new("Purity:");
-    gtk_box_append(GTK_BOX(filter_box), pur_label);
-
-    app->pur_sfw = gtk_check_button_new_with_label("SFW");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(app->pur_sfw), cfg->pur_sfw);
+    /* purity — toggle buttons with color hints */
+    app->pur_sfw = gtk_toggle_button_new_with_label("SFW");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->pur_sfw), cfg->pur_sfw);
     g_signal_connect(app->pur_sfw, "toggled", G_CALLBACK(on_category_toggled), app);
     gtk_box_append(GTK_BOX(filter_box), app->pur_sfw);
 
-    app->pur_sketchy = gtk_check_button_new_with_label("Sketchy");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(app->pur_sketchy), cfg->pur_sketchy);
+    app->pur_sketchy = gtk_toggle_button_new_with_label("Sketchy");
+    gtk_widget_add_css_class(app->pur_sketchy, "tag-sketchy");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->pur_sketchy), cfg->pur_sketchy);
     g_signal_connect(app->pur_sketchy, "toggled", G_CALLBACK(on_category_toggled), app);
     gtk_box_append(GTK_BOX(filter_box), app->pur_sketchy);
 
-    app->pur_nsfw = gtk_check_button_new_with_label("NSFW");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(app->pur_nsfw), cfg->pur_nsfw);
+    app->pur_nsfw = gtk_toggle_button_new_with_label("NSFW");
+    gtk_widget_add_css_class(app->pur_nsfw, "tag-nsfw");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->pur_nsfw), cfg->pur_nsfw);
     g_signal_connect(app->pur_nsfw, "toggled", G_CALLBACK(on_category_toggled), app);
     gtk_box_append(GTK_BOX(filter_box), app->pur_nsfw);
 
-    /* separator */
-    GtkWidget *sep2 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
-    gtk_box_append(GTK_BOX(filter_box), sep2);
-
     /* sorting */
-    GtkWidget *sort_label = gtk_label_new("Sort:");
-    gtk_box_append(GTK_BOX(filter_box), sort_label);
-
     static const char *sort_options[] = {
         "Date Added", "Relevance", "Random", "Views", "Favorites", "Top List", NULL
     };
@@ -1452,14 +1443,7 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
                      G_CALLBACK(on_top_range_changed), app);
     gtk_box_append(GTK_BOX(filter_box), app->top_range_combo);
 
-    /* separator */
-    GtkWidget *sep3 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
-    gtk_box_append(GTK_BOX(filter_box), sep3);
-
     /* aspect ratio */
-    GtkWidget *ratio_label = gtk_label_new("Ratio:");
-    gtk_box_append(GTK_BOX(filter_box), ratio_label);
-
     const char *ratio_options[] = {
         "Any", "16:9", "16:10", "21:9", "32:9", "48:9",
         "9:16", "10:16", "9:18", "1:1", "3:2", "4:3", "5:4", NULL
@@ -1470,17 +1454,10 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
                      G_CALLBACK(on_ratio_changed), app);
     gtk_box_append(GTK_BOX(filter_box), app->ratio_combo);
 
-    /* separator */
-    GtkWidget *sep4 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
-    gtk_box_append(GTK_BOX(filter_box), sep4);
-
     /* minimum resolution */
-    GtkWidget *res_label = gtk_label_new("Min res:");
-    gtk_box_append(GTK_BOX(filter_box), res_label);
-
     app->res_entry = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(app->res_entry), "1920x1080");
-    gtk_widget_set_size_request(app->res_entry, 110, -1);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app->res_entry), "1920×1080");
+    gtk_widget_set_size_request(app->res_entry, 105, -1);
     gtk_entry_set_max_length(GTK_ENTRY(app->res_entry), 12);
     if (cfg->min_resolution)
         gtk_editable_set_text(GTK_EDITABLE(app->res_entry), cfg->min_resolution);
