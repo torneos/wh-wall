@@ -617,6 +617,9 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
     else if (ratio_idx == 11) pic_h = 135; /* 4:3 */
     else if (ratio_idx == 12) pic_h = 144; /* 5:4 */
 
+    /* Fixed width on the button so flowbox doesn't stretch it */
+    gtk_widget_set_size_request(btn, pic_w, -1);
+
     /* overlay: picture + semi-transparent info bar on top */
     GtkWidget *overlay = gtk_overlay_new();
     gtk_button_set_child(GTK_BUTTON(btn), overlay);
@@ -1477,7 +1480,7 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(app->flowbox), 3);
     gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(app->flowbox), 99);
     gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(app->flowbox), GTK_SELECTION_NONE);
-    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(app->flowbox), FALSE);
+    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(app->flowbox), TRUE);
     gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(app->flowbox), 10);
     gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(app->flowbox), 10);
 
