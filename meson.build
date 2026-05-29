@@ -3,6 +3,8 @@ project('wh-wall', 'c',
   default_options: ['c_std=c11', 'warning_level=2']
 )
 
+add_project_arguments('-Wno-unused-parameter', language: 'c')
+
 gtk4_dep    = dependency('gtk4')
 curl_dep    = dependency('libcurl')
 json_dep    = dependency('json-glib-1.0')
