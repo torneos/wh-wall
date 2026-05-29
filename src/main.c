@@ -19,6 +19,11 @@ main(int argc, char **argv)
 {
     log_info("wh-wall %s starting", "0.1.0");
 
+    /* Use Cairo renderer by default — Vulkan causes segfaults on some
+     * Hyprland/Wayland configurations. Users can override with GSK_RENDERER. */
+    if (!g_getenv("GSK_RENDERER"))
+        g_setenv("GSK_RENDERER", "cairo", TRUE);
+
     /* load config */
     AppConfig *cfg = config_load();
     api_set_config(cfg);
