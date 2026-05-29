@@ -549,19 +549,16 @@ on_thumb_button_clicked(GtkButton *btn, gpointer user_data)
 static GtkWidget *
 create_thumbnail(WhApp *app, WallpaperInfo *info)
 {
-    /* Wrap in a GtkButton so clicks always work (including on Hyprland
-     * workspace switches). The button has no visible styling. */
     GtkWidget *btn = gtk_button_new();
     gtk_widget_add_css_class(btn, "thumbnail-btn");
-    gtk_widget_set_size_request(btn, 250, -1);
 
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(box, "thumbnail");
     gtk_button_set_child(GTK_BUTTON(btn), box);
 
     /* picture */
     GtkWidget *picture = gtk_picture_new();
-    gtk_widget_set_size_request(picture, 250, 156);
+    gtk_widget_set_size_request(picture, 260, 162);
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
     gtk_picture_set_can_shrink(GTK_PICTURE(picture), FALSE);
     gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
@@ -573,18 +570,44 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
     else
         log_info("No thumbnail URL for wallpaper %s", info->id);
 
-    /* label */
-    char *label_text = g_strdup_printf("%s\n%s  ♥%d  👁%d",
-        info->resolution ? info->resolution : "",
-        info->id, info->favorites, info->views);
-    GtkWidget *label = gtk_label_new(label_text);
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-    gtk_widget_set_margin_start(label, 8);
-    gtk_widget_set_margin_end(label, 8);
-    gtk_widget_set_margin_bottom(label, 8);
-    gtk_widget_add_css_class(label, "thumb-label");
-    gtk_box_append(GTK_BOX(box), label);
-    g_free(label_text);
+    /* label area */
+    GtkWidget *label_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_margin_start(label_box, 10);
+    gtk_widget_set_margin_end(label_box, 10);
+    gtk_widget_set_margin_top(label_box, 8);
+    gtk_widget_set_margin_bottom(label_box, 8);
+    gtk_box_append(GTK_BOX(box), label_box);
+
+    /* resolution */
+    GtkWidget *res_label = gtk_label_new(info->resolution ? info->resolution : "");
+    gtk_label_set_xalign(GTK_LABEL(res_label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(res_label), PANGO_ELLIPSIZE_END);
+    gtk_widget_add_css_class(res_label, "thumb-res");
+    gtk_box_append(GTK_BOX(label_box), res_label);
+
+    /* stats row */
+    GtkWidget *stats_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_append(GTK_BOX(label_box), stats_box);
+
+    char *fav_text = g_strdup_printf("♥ %d", info->favorites);
+    GtkWidget *fav_label = gtk_label_new(fav_text);
+    gtk_widget_add_css_class(fav_label, "thumb-stat");
+    gtk_box_append(GTK_BOX(stats_box), fav_label);
+    g_free(fav_text);
+
+    char *view_text = g_strdup_printf("👁 %d", info->views);
+    GtkWidget *view_label = gtk_label_new(view_text);
+    gtk_widget_add_css_class(view_label, "thumb-stat");
+    gtk_box_append(GTK_BOX(stats_box), view_label);
+    g_free(view_text);
+
+    char *id_text = g_strdup_printf("#%s", info->id);
+    GtkWidget *id_label = gtk_label_new(id_text);
+    gtk_widget_set_hexpand(id_label, TRUE);
+    gtk_label_set_xalign(GTK_LABEL(id_label), 1.0);
+    gtk_widget_add_css_class(id_label, "thumb-id");
+    gtk_box_append(GTK_BOX(stats_box), id_label);
+    g_free(id_text);
 
     /* store info on the button (outer widget) */
     g_object_set_data_full(G_OBJECT(btn), "wallpaper-info", info,
@@ -1220,8 +1243,27 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     /* ---- CSS provider for purity borders ---- */
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
-        ".purity-sketchy { border: 1px solid rgba(180,160,40,0.7); border-radius: 4px; }"
-        ".purity-nsfw    { border: 1px solid rgba(180,50,50,0.7);  border-radius: 4px; }");
+        ".thumbnail-btn {"
+        "  background: alpha(currentColor, 0.06);"
+        "  border: 1px solid alpha(currentColor, 0.08);"
+        "  border-radius: 8px;"
+        "  padding: 0;"
+        "  transition: background 0.2s, box-shadow 0.2s;"
+        "}"
+        ".thumbnail-btn:hover {"
+        "  background: alpha(currentColor, 0.10);"
+        "  box-shadow: 0 2px 12px alpha(black, 0.15);"
+        "}"
+        ".purity-sketchy {"
+        "  border: 1.5px solid rgba(180,160,40,0.6);"
+        "}"
+        ".purity-nsfw {"
+        "  border: 1.5px solid rgba(180,50,50,0.6);"
+        "}"
+        ".thumbnail picture { border-radius: 8px 8px 0 0; }"
+        ".thumb-res { font-size: 0.85em; opacity: 0.8; }"
+        ".thumb-stat { font-size: 0.8em; opacity: 0.55; }"
+        ".thumb-id { font-size: 0.75em; opacity: 0.4; font-family: monospace; }");
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
         GTK_STYLE_PROVIDER(css),
