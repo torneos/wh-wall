@@ -373,8 +373,6 @@ on_download_done(GObject *source, GAsyncResult *res, gpointer user_data)
     } else {
         gtk_label_set_text(GTK_LABEL(dt->status_label), "Download failed.");
     }
-
-    download_task_free(dt);
 }
 
 static void
