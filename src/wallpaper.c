@@ -150,16 +150,67 @@ wallpaper_download(WallpaperInfo *info, const char *dest_dir)
 }
 
 /* ------------------------------------------------------------------ */
-/* set as desktop background (GNOME / KDE)                             */
+/* set as desktop background                                           */
+/* method: 0=auto, 1=GNOME, 2=KDE, 3=hyprpaper                       */
 /* ------------------------------------------------------------------ */
 void
-wallpaper_set_as_background(const char *path)
+wallpaper_set_as_background(const char *path, int method)
 {
     if (!path) return;
 
-    log_info("Setting wallpaper: %s", path);
+    log_info("Setting wallpaper: %s (method=%d)", path, method);
 
-    /* GNOME 42+ dark/light */
+    if (method == 3) {
+        /* hyprpaper */
+        char *cmd = g_strdup_printf(
+            "hyprctl hyprpaper unload all 2>/dev/null; "
+            "hyprctl hyprpaper preload \"%s\"; "
+            "hyprctl hyprpaper wallpaper \",%s\"",
+            path, path);
+        int ret = system(cmd);
+        if (ret != 0)
+            log_error("hyprpaper command failed (ret=%d)", ret);
+        g_free(cmd);
+        return;
+    }
+
+    if (method == 1) {
+        /* GNOME only */
+        char *uri = g_filename_to_uri(path, NULL, NULL);
+        char *cmd = g_strdup_printf(
+            "gsettings set org.gnome.desktop.background picture-uri-dark \"%s\" && "
+            "gsettings set org.gnome.desktop.background picture-uri \"%s\"",
+            uri, uri);
+        int ret = system(cmd);
+        if (ret != 0)
+            log_error("GNOME gsettings failed (ret=%d)", ret);
+        g_free(cmd);
+        g_free(uri);
+        return;
+    }
+
+    if (method == 2) {
+        /* KDE only */
+        char *cmd = g_strdup_printf(
+            "dbus-send --session --dest=org.kde.plasmashell --type=method_call "
+            "/PlasmaShell org.kde.PlasmaShell.evaluateScript "
+            "\"string:var allDesktops = desktops();"
+            "for (i=0;i<allDesktops.length;i++) {"
+            "  d = allDesktops[i];"
+            "  d.wallpaperPlugin = 'org.kde.image';"
+            "  d.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];"
+            "  d.writeConfig('Image', 'file://%s');"
+            "}\"'",
+            path);
+        int ret = system(cmd);
+        if (ret != 0)
+            log_error("KDE Plasma command failed (ret=%d)", ret);
+        g_free(cmd);
+        return;
+    }
+
+    /* method == 0: auto-detect */
+    /* Try GNOME first, then KDE fallback */
     char *uri = g_filename_to_uri(path, NULL, NULL);
 
     char *cmd = g_strdup_printf(
@@ -170,7 +221,6 @@ wallpaper_set_as_background(const char *path)
     int ret = system(cmd);
     if (ret != 0) {
         log_warn("GNOME gsettings failed (ret=%d), trying KDE fallback", ret);
-        /* fallback: try KDE */
         g_free(cmd);
         cmd = g_strdup_printf(
             "dbus-send --session --dest=org.kde.plasmashell --type=method_call "

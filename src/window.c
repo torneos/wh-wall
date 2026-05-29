@@ -50,6 +50,7 @@ typedef struct {
     /* settings */
     GtkWidget   *settings_dialog;
     GtkWidget   *download_dir_entry;
+    GtkWidget   *wallpaper_method_combo;
 
     /* current preview wallpaper data */
     WallpaperInfo *preview_wp;
@@ -320,7 +321,7 @@ on_preview_set_bg(GtkButton *btn, gpointer user_data)
     }
 
     char *path = wallpaper_get_path(app->preview_wp, app->config->download_dir);
-    wallpaper_set_as_background(path);
+    wallpaper_set_as_background(path, app->config->wallpaper_method);
     g_free(path);
 
     gtk_window_destroy(GTK_WINDOW(app->preview_popover));
@@ -870,6 +871,10 @@ on_settings_save(GtkButton *btn, gpointer user_data)
     g_free(app->config->api_key);
     app->config->api_key = g_strdup(key);
 
+    /* save wallpaper method */
+    app->config->wallpaper_method = gtk_drop_down_get_selected(
+        GTK_DROP_DOWN(app->wallpaper_method_combo));
+
     config_save(app->config);
 
     /* verify the key */
@@ -1010,6 +1015,37 @@ show_settings_dialog(WhApp *app, GtkWidget *parent)
     GtkWidget *browse_btn = gtk_button_new_with_label("Browse...");
     g_signal_connect(browse_btn, "clicked", G_CALLBACK(on_browse_btn), app);
     gtk_box_append(GTK_BOX(dl_row), browse_btn);
+
+    /* ---- separator ---- */
+    GtkWidget *sep_mid2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(sep_mid2, 12);
+    gtk_widget_set_margin_bottom(sep_mid2, 4);
+    gtk_box_append(GTK_BOX(vbox), sep_mid2);
+
+    /* ---- wallpaper method section ---- */
+    GtkWidget *wm_section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_start(wm_section, 20);
+    gtk_widget_set_margin_end(wm_section, 20);
+    gtk_widget_set_margin_top(wm_section, 12);
+    gtk_box_append(GTK_BOX(vbox), wm_section);
+
+    GtkWidget *wm_title = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(wm_title), "<span weight='bold'>Wallpaper Setter</span>");
+    gtk_label_set_xalign(GTK_LABEL(wm_title), 0.0);
+    gtk_box_append(GTK_BOX(wm_section), wm_title);
+
+    GtkWidget *wm_desc = gtk_label_new("Choose how to apply wallpapers to your desktop.");
+    gtk_label_set_xalign(GTK_LABEL(wm_desc), 0.0);
+    gtk_widget_set_opacity(wm_desc, 0.6);
+    gtk_box_append(GTK_BOX(wm_section), wm_desc);
+
+    static const char *wm_options[] = {
+        "Auto-detect", "GNOME (gsettings)", "KDE Plasma", "hyprpaper", NULL
+    };
+    app->wallpaper_method_combo = gtk_drop_down_new_from_strings(wm_options);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(app->wallpaper_method_combo),
+                                app->config->wallpaper_method);
+    gtk_box_append(GTK_BOX(wm_section), app->wallpaper_method_combo);
 
     /* ---- separator ---- */
     GtkWidget *sep_bot = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);

@@ -19,6 +19,7 @@ typedef struct {
     int   top_range_index;  /* 0-6 */
     int   ratio_index;      /* 0-12 */
     char *min_resolution;
+    int   wallpaper_method; /* 0=auto, 1=gnome, 2=kde, 3=hyprpaper */
 } AppConfig;
 
 AppConfig *config_load(void);
