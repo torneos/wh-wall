@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-# wh-wall
-Native GTK4 app for Wallhaven.cc. Set wallpaper in Gnome/KDE
-=======
+
 # wh-wall — Wallhaven Wallpaper Browser
 
 Native GTK4 desktop application for browsing and downloading wallpapers from [wallhaven.cc](https://wallhaven.cc).
