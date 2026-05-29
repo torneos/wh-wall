@@ -42,7 +42,9 @@ static gboolean
 update_progress_bar(gpointer user_data)
 {
     DownloadCtx *ctx = user_data;
-    if (ctx->progress && ctx->total > 0) {
+    if (!ctx->progress || !GTK_IS_PROGRESS_BAR(ctx->progress))
+        return G_SOURCE_REMOVE;
+    if (ctx->total > 0) {
         double frac = (double)ctx->now / (double)ctx->total;
         if (frac > 1.0) frac = 1.0;
         gtk_progress_bar_set_fraction(ctx->progress, frac);
@@ -144,7 +146,7 @@ wallpaper_download(WallpaperInfo *info, const char *dest_dir,
         g_source_remove(timer_id);
 
     /* set progress to 100% on completion */
-    if (progress)
+    if (progress && GTK_IS_PROGRESS_BAR(progress))
         gtk_progress_bar_set_fraction(progress, 1.0);
 
     g_free(api_url);

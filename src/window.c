@@ -356,7 +356,8 @@ on_download_done(GObject *source, GAsyncResult *res, gpointer user_data)
     DownloadTask *dt = user_data;
     gboolean ok = g_task_propagate_boolean(G_TASK(res), NULL);
 
-    gtk_widget_set_visible(dt->progress, FALSE);
+    if (dt->progress && GTK_IS_PROGRESS_BAR(dt->progress))
+        gtk_widget_set_visible(dt->progress, FALSE);
 
     if (ok) {
         if (dt->set_bg) {
