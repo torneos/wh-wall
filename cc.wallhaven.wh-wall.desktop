@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=WH-Wall
+Comment=Wallhaven Wallpaper Browser
+Exec=wh-wall
+Icon=wallhaven
+Terminal=false
+Type=Application
+Categories=Graphics;Utility;
+Keywords=wallpaper;wallhaven;background;
