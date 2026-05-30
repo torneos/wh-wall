@@ -22,6 +22,6 @@ package() {
     DESTDIR="$pkgdir" ninja -C builddir install
 
     # Install desktop entry
-    install -Dm644 "$srcdir/$pkgname-$pkgver/cc.wallhaven.wh-wall.desktop" \
+    install -Dm644 "$srcdir/cc.wallhaven.wh-wall.desktop" \
         "$pkgdir/usr/share/applications/cc.wallhaven.wh-wall.desktop"
 }
