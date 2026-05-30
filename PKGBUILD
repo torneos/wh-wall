@@ -8,8 +8,10 @@ url="https://github.com/torneos/wh-wall"
 license=('GPL-3.0-or-later')
 depends=('gtk4' 'libcurl-gnutls' 'json-glib')
 makedepends=('meson' 'gcc')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+        "cc.wallhaven.wh-wall.desktop::$url/raw/main/cc.wallhaven.wh-wall.desktop")
+sha256sums=('SKIP'
+            'SKIP')
 
 build() {
     cd "$pkgname-$pkgver"
