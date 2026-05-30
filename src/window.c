@@ -55,6 +55,7 @@ typedef struct {
 
     /* current preview wallpaper data */
     WallpaperInfo *preview_wp;
+    GBytes        *preview_bytes;
 
     /* search state */
     char        *current_query;
@@ -169,7 +170,10 @@ ensure_download_dir(WhApp *app)
 typedef struct {
     WhApp        *app;
     GtkPicture   *picture;
+    GtkProgressBar *progress;
     char         *url;
+    curl_off_t   total;
+    curl_off_t   now;
 } ThumbLoadData;
 
 static void
@@ -183,6 +187,8 @@ thumb_load_data_free(ThumbLoadData *tld)
 typedef struct {
     GtkPicture *picture;
     GBytes     *bytes;
+    WhApp      *app;
+    bool       is_preview;
 } ThumbResultData;
 
 static gboolean
@@ -199,6 +205,12 @@ on_thumb_loaded_idle(gpointer user_data)
                         (size >= 4 && data[0] == 'R' && data[1] == 'I' &&
                          data[2] == 'F' && data[3] == 'F');                 /* WebP */
         if (is_image) {
+            /* Cache the image bytes for later Save/Set-as-BG */
+            if (trd->is_preview && trd->app) {
+                if (trd->app->preview_bytes)
+                    g_bytes_unref(trd->app->preview_bytes);
+                trd->app->preview_bytes = g_bytes_ref(trd->bytes);
+            }
             GdkTexture *texture = gdk_texture_new_from_bytes(trd->bytes, NULL);
             if (texture) {
                 gtk_picture_set_paintable(GTK_PICTURE(trd->picture),
@@ -234,6 +246,31 @@ curl_write_cb_internal(void *ptr, size_t size, size_t nmemb, void *userdata)
     return total;
 }
 
+static int
+thumb_progress_cb(void *userdata, curl_off_t dltotal, curl_off_t dlnow,
+                  curl_off_t ultotal, curl_off_t ulnow)
+{
+    (void)ultotal; (void)ulnow;
+    ThumbLoadData *tld = userdata;
+    tld->total = dltotal;
+    tld->now   = dlnow;
+    return 0;
+}
+
+static gboolean
+update_thumb_progress(gpointer user_data)
+{
+    ThumbLoadData *tld = user_data;
+    if (!tld->progress || !GTK_IS_PROGRESS_BAR(tld->progress))
+        return G_SOURCE_REMOVE;
+    if (tld->total > 0) {
+        double frac = (double)tld->now / (double)tld->total;
+        if (frac > 1.0) frac = 1.0;
+        gtk_progress_bar_set_fraction(tld->progress, frac);
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 static void
 thumb_download_thread(GTask *task, gpointer source, gpointer task_data,
                       GCancellable *cancellable)
@@ -249,14 +286,26 @@ thumb_download_thread(GTask *task, gpointer source, gpointer task_data,
 
     typedef struct { char *data; size_t len; } Buf;
     Buf buf = {NULL, 0};
+    guint timer_id = 0;
+
     curl_easy_setopt(curl, CURLOPT_URL, tld->url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb_internal);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, thumb_progress_cb);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, tld);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "wh-wall/0.1");
+
+    /* Pulse progress bar every 100ms */
+    if (tld->progress)
+        timer_id = g_timeout_add(100, update_thumb_progress, tld);
 
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
+
+    if (timer_id)
+        g_source_remove(timer_id);
 
     if (res != CURLE_OK || !buf.data || buf.len == 0) {
         if (res != CURLE_OK)
@@ -272,8 +321,10 @@ thumb_download_thread(GTask *task, gpointer source, gpointer task_data,
     GBytes *bytes = g_bytes_new_take(buf.data, buf.len);
 
     ThumbResultData *trd = g_new0(ThumbResultData, 1);
-    trd->picture = tld->picture;
-    trd->bytes   = bytes;
+    trd->picture    = tld->picture;
+    trd->bytes      = bytes;
+    trd->app        = tld->app;
+    trd->is_preview = (tld->progress != NULL);
     g_object_ref(trd->picture);
 
     g_task_return_pointer(task, trd, g_free);
@@ -285,6 +336,12 @@ on_thumb_download_done(GObject *source, GAsyncResult *res, gpointer user_data)
     ThumbLoadData *tld = user_data;
     ThumbResultData *trd = g_task_propagate_pointer(G_TASK(res), NULL);
 
+    /* Set progress to 100% and hide */
+    if (tld->progress) {
+        gtk_progress_bar_set_fraction(tld->progress, 1.0);
+        gtk_widget_set_visible(GTK_WIDGET(tld->progress), FALSE);
+    }
+
     if (trd) {
         g_idle_add(on_thumb_loaded_idle, trd);
     } else {
@@ -294,12 +351,14 @@ on_thumb_download_done(GObject *source, GAsyncResult *res, gpointer user_data)
 }
 
 static void
-load_thumbnail(WhApp *app, GtkPicture *picture, const char *url)
+load_thumbnail(WhApp *app, GtkPicture *picture, const char *url,
+                GtkProgressBar *progress)
 {
     ThumbLoadData *tld = g_new0(ThumbLoadData, 1);
-    tld->app     = app;
-    tld->picture = GTK_PICTURE(picture);
-    tld->url     = g_strdup(url);
+    tld->app      = app;
+    tld->picture  = GTK_PICTURE(picture);
+    tld->progress = progress;
+    tld->url      = g_strdup(url);
     g_object_ref(picture);
 
     GCancellable *cancellable = g_cancellable_new();
@@ -345,14 +404,45 @@ download_task_free(DownloadTask *dt)
     g_free(dt);
 }
 
+static gboolean
+remove_toast(gpointer w)
+{
+    gtk_widget_unparent(GTK_WIDGET(w));
+    return G_SOURCE_REMOVE;
+}
+
 static void
 download_thread_func(GTask *task, gpointer source, gpointer task_data,
                      GCancellable *cancellable)
 {
     DownloadTask *dt = task_data;
     ensure_download_dir(dt->app);
-    bool ok = wallpaper_download(dt->info, dt->app->config->download_dir,
-                                  GTK_PROGRESS_BAR(dt->progress));
+
+    /* If we have cached bytes from preview, write them directly */
+    bool ok = FALSE;
+    if (dt->app->preview_bytes) {
+        char *filename = wallpaper_get_path(dt->info,
+                                             dt->app->config->download_dir);
+        const void *data = g_bytes_get_data(dt->app->preview_bytes, NULL);
+        gsize size = g_bytes_get_size(dt->app->preview_bytes);
+        FILE *fp = fopen(filename, "wb");
+        if (fp && data && size > 0) {
+            fwrite(data, 1, size, fp);
+            fclose(fp);
+            ok = TRUE;
+            log_info("Saved from cache: %s (%zu bytes)", filename, size);
+        } else if (fp) {
+            fclose(fp);
+        }
+        g_free(filename);
+    }
+
+    /* Fall back to network download if no cache */
+    if (!ok) {
+        ok = wallpaper_download(dt->info, dt->app->config->download_dir,
+                                 GTK_PROGRESS_BAR(dt->progress));
+    }
+
     g_task_return_boolean(task, ok);
 }
 
@@ -372,6 +462,32 @@ on_download_done(GObject *source, GAsyncResult *res, gpointer user_data)
             wallpaper_set_as_background(path, dt->app->config->wallpaper_method);
             g_free(path);
         }
+
+        /* Show success overlay on the preview window */
+        if (dt->window && GTK_IS_WINDOW(dt->window)) {
+            GtkWidget *overlay = gtk_window_get_child(GTK_WINDOW(dt->window));
+            if (GTK_IS_OVERLAY(overlay)) {
+                GtkWidget *toast = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+                gtk_widget_set_halign(toast, GTK_ALIGN_CENTER);
+                gtk_widget_set_valign(toast, GTK_ALIGN_CENTER);
+                gtk_widget_add_css_class(toast, "success-toast");
+                gtk_overlay_add_overlay(GTK_OVERLAY(overlay), toast);
+
+                GtkWidget *check = gtk_image_new_from_icon_name("emblem-ok-symbolic");
+                gtk_widget_set_size_request(check, 64, 64);
+                gtk_image_set_pixel_size(GTK_IMAGE(check), 64);
+                gtk_box_append(GTK_BOX(toast), check);
+
+                const char *text = dt->set_bg ? "Wallpaper set!" : "Saved!";
+                GtkWidget *label = gtk_label_new(text);
+                gtk_widget_add_css_class(label, "success-toast-label");
+                gtk_box_append(GTK_BOX(toast), label);
+
+                /* Auto-remove after 2 seconds */
+                g_timeout_add_seconds(2, remove_toast, toast);
+            }
+        }
+
         char *msg = g_strdup_printf("Downloaded to %s",
                                      dt->app->config->download_dir);
         gtk_label_set_text(GTK_LABEL(dt->status_label), msg);
@@ -386,17 +502,10 @@ start_async_download(WhApp *app, bool set_bg)
 {
     if (!app->preview_wp || !app->preview_wp->url) return;
 
-    GtkWidget *progress = g_object_get_data(G_OBJECT(app->preview_popover),
-                                             "dl-progress");
-    if (progress) {
-        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(progress), 0.0);
-        gtk_widget_set_visible(progress, TRUE);
-    }
-
     DownloadTask *dt = g_new0(DownloadTask, 1);
     dt->app          = app;
     dt->info         = wallpaper_info_copy(app->preview_wp);
-    dt->progress     = progress;
+    dt->progress     = NULL;
     dt->window       = app->preview_popover;
     dt->status_label = app->status_label;
     dt->set_bg       = set_bg;
@@ -428,24 +537,34 @@ on_preview_download(GtkButton *btn, gpointer user_data)
 static void
 on_preview_copy(GtkButton *btn, gpointer user_data)
 {
+    (void)btn;
     WhApp *app = user_data;
-    if (!app->preview_wp || !app->preview_wp->thumb_url) return;
+    if (!app->preview_wp || !app->preview_wp->url) return;
 
     GdkClipboard *clipboard = gdk_display_get_clipboard(
         gdk_display_get_default());
 
-    /* Copy URL to clipboard */
-    gdk_clipboard_set_text(clipboard, app->preview_wp->url);
+    /* Copy the page URL to clipboard */
+    char *page_url = g_strdup_printf("https://wallhaven.cc/w/%s",
+                                      app->preview_wp->id);
+    gdk_clipboard_set_text(clipboard, page_url);
+    g_free(page_url);
 
     gtk_label_set_text(GTK_LABEL(app->status_label), "URL copied to clipboard");
-
-    gtk_window_destroy(GTK_WINDOW(app->preview_popover));
 }
 
-static void
-on_preview_destroy(gpointer data)
+static gboolean
+on_main_esc(GtkEventControllerKey *ctrl, guint kv, guint kc,
+             GdkModifierType mod, gpointer user_data)
 {
-    *(GtkWidget **)data = NULL;
+    (void)ctrl; (void)kc; (void)mod;
+    WhApp *app = user_data;
+    if (kv == GDK_KEY_Escape && app->preview_popover &&
+        GTK_IS_WINDOW(app->preview_popover)) {
+        gtk_window_destroy(GTK_WINDOW(app->preview_popover));
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static void
@@ -454,6 +573,12 @@ show_preview(WhApp *app, WallpaperInfo *info)
     if (app->preview_wp)
         wallpaper_info_free(app->preview_wp);
     app->preview_wp = wallpaper_info_copy(info);
+
+    /* Clear cached preview image */
+    if (app->preview_bytes) {
+        g_bytes_unref(app->preview_bytes);
+        app->preview_bytes = NULL;
+    }
 
     /* destroy previous preview window if it exists */
     if (app->preview_popover) {
@@ -466,6 +591,7 @@ show_preview(WhApp *app, WallpaperInfo *info)
     app->preview_popover = pw;
     gtk_window_set_title(GTK_WINDOW(pw), info->id ? info->id : "Preview");
     gtk_window_set_resizable(GTK_WINDOW(pw), FALSE);
+    gtk_window_set_decorated(GTK_WINDOW(pw), FALSE);
 
     /* Parse resolution to fit window to image size */
     int img_w = 900, img_h = 675;
@@ -482,8 +608,8 @@ show_preview(WhApp *app, WallpaperInfo *info)
                     g_object_unref(mon);
                 }
             }
-            int max_w = geom.width  * 0.65;
-            int max_h = geom.height * 0.65;
+            int max_w = geom.width  * 0.43;
+            int max_h = geom.height * 0.43;
             double scale_w = (double)max_w / w;
             double scale_h = (double)max_h / h;
             double scale = scale_w < scale_h ? scale_w : scale_h;
@@ -496,27 +622,39 @@ show_preview(WhApp *app, WallpaperInfo *info)
 
     /* overlay: image fills window, controls on top */
     GtkWidget *overlay = gtk_overlay_new();
+    gtk_widget_add_css_class(overlay, "preview-overlay");
     gtk_window_set_child(GTK_WINDOW(pw), overlay);
 
-    /* image fills entire window */
+    /* image fills entire window, keeping aspect ratio */
     GtkWidget *prev_img = gtk_picture_new();
-    gtk_picture_set_content_fit(GTK_PICTURE(prev_img), GTK_CONTENT_FIT_CONTAIN);
+    gtk_picture_set_content_fit(GTK_PICTURE(prev_img), GTK_CONTENT_FIT_FILL);
     gtk_picture_set_can_shrink(GTK_PICTURE(prev_img), TRUE);
     gtk_widget_set_vexpand(prev_img, TRUE);
     gtk_widget_set_hexpand(prev_img, TRUE);
     gtk_overlay_set_child(GTK_OVERLAY(overlay), prev_img);
 
-    /* load thumbnail */
-    if (info->thumb_url && info->thumb_url[0]) {
-        load_thumbnail(app, GTK_PICTURE(prev_img), info->thumb_url);
+    /* centered progress bar for full image loading */
+    GtkWidget *load_progress = gtk_progress_bar_new();
+    gtk_widget_set_halign(load_progress, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(load_progress, GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(load_progress, 200, -1);
+    gtk_widget_add_css_class(load_progress, "preview-load-progress");
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), load_progress);
+    g_object_set_data(G_OBJECT(pw), "preview-load-progress", load_progress);
+
+    /* load full image — but fall back to thumbnail if url not available */
+    const char *img_url = info->url && info->url[0] ? info->url : info->thumb_url;
+    if (img_url) {
+        load_thumbnail(app, GTK_PICTURE(prev_img), img_url,
+                        GTK_PROGRESS_BAR(load_progress));
     }
 
     /* close button — top right corner */
     GtkWidget *close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
     gtk_widget_set_halign(close_btn, GTK_ALIGN_END);
     gtk_widget_set_valign(close_btn, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(close_btn, 8);
-    gtk_widget_set_margin_end(close_btn, 8);
+    gtk_widget_set_margin_top(close_btn, 10);
+    gtk_widget_set_margin_end(close_btn, 10);
     gtk_widget_add_css_class(close_btn, "circular");
     gtk_widget_add_css_class(close_btn, "preview-close");
     g_signal_connect_swapped(close_btn, "clicked",
@@ -550,41 +688,53 @@ show_preview(WhApp *app, WallpaperInfo *info)
     gtk_widget_set_hexpand(spacer, TRUE);
     gtk_box_append(GTK_BOX(bottom_bar), spacer);
 
-    /* progress bar */
-    GtkWidget *dl_progress = gtk_progress_bar_new();
-    gtk_widget_set_visible(dl_progress, FALSE);
-    gtk_widget_set_size_request(dl_progress, 120, -1);
-    gtk_box_append(GTK_BOX(bottom_bar), dl_progress);
-    g_object_set_data(G_OBJECT(pw), "dl-progress", dl_progress);
-
-    /* action buttons */
-    GtkWidget *copy_btn = gtk_button_new_with_label("Copy URL");
+    /* action buttons — icons with tooltips */
+    GtkWidget *copy_btn = gtk_button_new_from_icon_name("edit-copy-symbolic");
+    gtk_widget_set_size_request(copy_btn, 50, -1);
+    gtk_widget_set_tooltip_text(copy_btn, "Copy URL");
     g_signal_connect(copy_btn, "clicked", G_CALLBACK(on_preview_copy), app);
     gtk_box_append(GTK_BOX(bottom_bar), copy_btn);
 
-    GtkWidget *dl_btn2 = gtk_button_new_with_label("Download");
+    GtkWidget *browser_btn = gtk_button_new_from_icon_name("web-browser-symbolic");
+    gtk_widget_set_size_request(browser_btn, 50, -1);
+    gtk_widget_set_tooltip_text(browser_btn, "Open in Browser");
+    g_signal_connect_swapped(browser_btn, "clicked",
+        G_CALLBACK(wallpaper_open_in_browser), (gpointer)info->id);
+    gtk_box_append(GTK_BOX(bottom_bar), browser_btn);
+
+    GtkWidget *dl_btn2 = gtk_button_new_from_icon_name("folder-download-symbolic");
+    gtk_widget_set_size_request(dl_btn2, 50, -1);
+    gtk_widget_set_tooltip_text(dl_btn2, "Save");
     g_signal_connect(dl_btn2, "clicked", G_CALLBACK(on_preview_download), app);
     gtk_box_append(GTK_BOX(bottom_bar), dl_btn2);
 
-    GtkWidget *bg_btn = gtk_button_new_with_label("Set as Background");
+    GtkWidget *bg_btn = gtk_button_new_from_icon_name("preferences-desktop-wallpaper-symbolic");
+    gtk_widget_set_size_request(bg_btn, 50, -1);
+    gtk_widget_set_tooltip_text(bg_btn, "Set as Background");
     gtk_widget_add_css_class(bg_btn, "suggested-action");
     g_signal_connect(bg_btn, "clicked", G_CALLBACK(on_preview_set_bg), app);
     gtk_box_append(GTK_BOX(bottom_bar), bg_btn);
 
     /* Clean up when preview window is destroyed */
-    g_signal_connect_data(pw, "destroy",
-        G_CALLBACK(on_preview_destroy),
-        g_memdup2(&app->preview_popover, sizeof(gpointer)),
-        (GClosureNotify)g_free, 0);
+    g_object_add_weak_pointer(G_OBJECT(pw), (gpointer *)&app->preview_popover);
+
+    /* Esc on preview window itself */
+    GtkEventController *pw_esc = gtk_event_controller_key_new();
+    g_signal_connect(pw_esc, "key-pressed",
+        G_CALLBACK(on_main_esc), app);
+    gtk_widget_add_controller(pw, pw_esc);
 
     gtk_window_present(GTK_WINDOW(pw));
 }
 
 static void
-on_thumb_button_clicked(GtkButton *btn, gpointer user_data)
+on_thumb_card_clicked(GtkGestureClick *gesture, int n_press,
+                      double x, double y, gpointer user_data)
 {
     WhApp *app = user_data;
-    WallpaperInfo *info = g_object_get_data(G_OBJECT(btn), "wallpaper-info");
+    GtkWidget *card = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(gesture));
+    WallpaperInfo *info = g_object_get_data(G_OBJECT(card), "wallpaper-info");
     if (info) {
         log_info("Preview: %s", info->id);
         show_preview(app, info);
@@ -597,8 +747,9 @@ on_thumb_button_clicked(GtkButton *btn, gpointer user_data)
 static GtkWidget *
 create_thumbnail(WhApp *app, WallpaperInfo *info)
 {
-    GtkWidget *btn = gtk_button_new();
-    gtk_widget_add_css_class(btn, "thumbnail-btn");
+    /* Use a plain box instead of GtkButton to avoid theme padding */
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(card, "thumbnail-card");
 
     /* Calculate height from width (180) and selected ratio */
     int ratio_idx = get_ratio_index(app);
@@ -617,30 +768,59 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
     else if (ratio_idx == 11) pic_h = 135; /* 4:3 */
     else if (ratio_idx == 12) pic_h = 144; /* 5:4 */
 
-    /* Fixed width on the button so flowbox doesn't stretch it */
-    gtk_widget_set_size_request(btn, pic_w, -1);
-    gtk_widget_set_halign(btn, GTK_ALIGN_CENTER);
-    gtk_widget_set_hexpand(btn, FALSE);
+    /* Fixed width so flowbox doesn't stretch it */
+    gtk_widget_set_size_request(card, pic_w, -1);
+    gtk_widget_set_halign(card, GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(card, FALSE);
 
     /* overlay: picture + semi-transparent info bar on top */
     GtkWidget *overlay = gtk_overlay_new();
-    gtk_button_set_child(GTK_BUTTON(btn), overlay);
+    gtk_widget_set_size_request(overlay, pic_w, pic_h);
+    gtk_widget_add_css_class(overlay, "thumb-overlay");
+    gtk_box_append(GTK_BOX(card), overlay);
 
     /* picture fills the entire overlay */
     GtkWidget *picture = gtk_picture_new();
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
     gtk_picture_set_can_shrink(GTK_PICTURE(picture), FALSE);
-    gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
     gtk_widget_set_size_request(picture, pic_w, pic_h);
     gtk_widget_set_halign(picture, GTK_ALIGN_FILL);
     gtk_widget_set_valign(picture, GTK_ALIGN_FILL);
+    gtk_widget_add_css_class(picture, "thumb-picture");
     gtk_overlay_set_child(GTK_OVERLAY(overlay), picture);
 
     /* load thumbnail */
     if (info->thumb_url)
-        load_thumbnail(app, GTK_PICTURE(picture), info->thumb_url);
+        load_thumbnail(app, GTK_PICTURE(picture), info->thumb_url, NULL);
     else
         log_info("No thumbnail URL for wallpaper %s", info->id);
+
+    /* resolution badge — built entirely with margins, no CSS padding */
+    /* Outer wrapper for positioning in overlay */
+    GtkWidget *res_wrap = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_halign(res_wrap, GTK_ALIGN_END);
+    gtk_widget_set_valign(res_wrap, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(res_wrap, 8);
+    gtk_widget_set_margin_end(res_wrap, 8);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), res_wrap);
+
+    /* Background box — CSS only for background color and border-radius */
+    GtkWidget *res_bg = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(res_bg, "res-badge-bg");
+    gtk_widget_set_margin_start(res_bg, 10);
+    gtk_widget_set_margin_end(res_bg, 10);
+    gtk_widget_set_margin_top(res_bg, 10);
+    gtk_widget_set_margin_bottom(res_bg, 10);
+    gtk_box_append(GTK_BOX(res_wrap), res_bg);
+
+    /* Label with margins on all sides to simulate padding */
+    GtkWidget *res_badge = gtk_label_new(info->resolution ? info->resolution : "");
+    gtk_widget_set_margin_start(res_badge, 15);
+    gtk_widget_set_margin_end(res_badge, 15);
+    gtk_widget_set_margin_top(res_badge, 5);
+    gtk_widget_set_margin_bottom(res_badge, 5);
+    gtk_widget_add_css_class(res_badge, "res-badge-label");
+    gtk_box_append(GTK_BOX(res_bg), res_badge);
 
     /* info bar overlayed at the bottom */
     GtkWidget *info_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -648,45 +828,69 @@ create_thumbnail(WhApp *app, WallpaperInfo *info)
     gtk_widget_add_css_class(info_bar, "thumb-info-bar");
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), info_bar);
 
-    /* resolution */
-    GtkWidget *res_label = gtk_label_new(info->resolution ? info->resolution : "");
-    gtk_label_set_xalign(GTK_LABEL(res_label), 0.0);
-    gtk_label_set_ellipsize(GTK_LABEL(res_label), PANGO_ELLIPSIZE_END);
-    gtk_widget_add_css_class(res_label, "thumb-res");
-    gtk_box_append(GTK_BOX(info_bar), res_label);
+    /* Padding via a wrapper box — margins work even in overlay children */
+    GtkWidget *info_inner = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_start(info_inner, 15);
+    gtk_widget_set_margin_end(info_inner, 15);
+    gtk_widget_set_margin_top(info_inner, 10);
+    gtk_widget_set_margin_bottom(info_inner, 10);
+    gtk_box_append(GTK_BOX(info_bar), info_inner);
+
+    /* file size icon + label */
+    GtkWidget *size_icon = gtk_image_new_from_icon_name("folder-download-symbolic");
+    gtk_widget_add_css_class(size_icon, "thumb-icon");
+    gtk_box_append(GTK_BOX(info_inner), size_icon);
+
+    /* Estimate size from resolution or show placeholder */
+    char size_text[32];
+    long w = 0, h = 0;
+    if (info->resolution && sscanf(info->resolution, "%ldx%ld", &w, &h) == 2 && w > 0 && h > 0) {
+        double mp = (double)(w * h) / 1000000.0;
+        double est_mb = mp * 0.4;
+        if (est_mb < 0.1) est_mb = 0.1;
+        snprintf(size_text, sizeof(size_text), "%.1f MB", est_mb);
+    } else {
+        snprintf(size_text, sizeof(size_text), "? MB");
+    }
+    GtkWidget *size_label = gtk_label_new(size_text);
+    gtk_widget_add_css_class(size_label, "thumb-size");
+    gtk_box_append(GTK_BOX(info_inner), size_label);
 
     /* spacer */
     GtkWidget *spacer = gtk_label_new("");
     gtk_widget_set_hexpand(spacer, TRUE);
-    gtk_box_append(GTK_BOX(info_bar), spacer);
+    gtk_box_append(GTK_BOX(info_inner), spacer);
 
-    /* stats */
-    char *fav_text = g_strdup_printf("♥ %d", info->favorites);
-    GtkWidget *fav_label = gtk_label_new(fav_text);
-    gtk_widget_add_css_class(fav_label, "thumb-stat");
-    gtk_box_append(GTK_BOX(info_bar), fav_label);
-    g_free(fav_text);
+    /* views */
+    GtkWidget *eye_icon = gtk_image_new_from_icon_name("eye-open-negative-filled-symbolic");
+    gtk_widget_add_css_class(eye_icon, "thumb-icon");
+    gtk_box_append(GTK_BOX(info_inner), eye_icon);
 
-    char *view_text = g_strdup_printf("👁 %d", info->views);
+    char *view_text = g_strdup_printf("%.1fk", info->views / 1000.0);
     GtkWidget *view_label = gtk_label_new(view_text);
-    gtk_widget_add_css_class(view_label, "thumb-stat");
-    gtk_box_append(GTK_BOX(info_bar), view_label);
+    gtk_widget_add_css_class(view_label, "thumb-views");
+    gtk_box_append(GTK_BOX(info_inner), view_label);
     g_free(view_text);
 
-    /* store info on the button (outer widget) */
-    g_object_set_data_full(G_OBJECT(btn), "wallpaper-info", info,
+    /* store info on the card */
+    g_object_set_data_full(G_OBJECT(card), "wallpaper-info", info,
                            (GDestroyNotify)wallpaper_info_free);
-    g_signal_connect(btn, "clicked", G_CALLBACK(on_thumb_button_clicked), app);
+
+    /* click gesture to open preview */
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_thumb_card_clicked), app);
+    gtk_widget_add_controller(card, GTK_EVENT_CONTROLLER(click));
 
     /* purity border: sfw=none, sketchy=yellow, nsfw=red */
     if (info->purity) {
         if (g_strcmp0(info->purity, "sketchy") == 0)
-            gtk_widget_add_css_class(btn, "purity-sketchy");
+            gtk_widget_add_css_class(card, "purity-sketchy");
         else if (g_strcmp0(info->purity, "nsfw") == 0)
-            gtk_widget_add_css_class(btn, "purity-nsfw");
+            gtk_widget_add_css_class(card, "purity-nsfw");
     }
 
-    return btn;
+    return card;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1301,20 +1505,35 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
 
     GtkWidget *win = gtk_application_window_new(gtk_app);
     app->window = win;
-    gtk_window_set_title(GTK_WINDOW(win), "wh-wall — Wallhaven Browser");
+    gtk_window_set_title(GTK_WINDOW(win), "WH-wall — Wallhaven Browser");
     gtk_window_set_default_size(GTK_WINDOW(win), 1100, 750);
 
     /* ---- CSS provider for purity borders ---- */
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_string(css,
-        ".thumbnail-btn {"
+        ".thumbnail-card {"
         "  background: transparent;"
         "  border: none;"
-        "  border-radius: 10px;"
+        "  outline: none;"
+        "  box-shadow: 0 2px 8px alpha(black, 0.3), 0 6px 24px alpha(black, 0.15);"
+        "  border-radius: 20px;"
         "  padding: 0;"
+        "  margin: 0;"
+        "  min-width: 0;"
+        "  min-height: 0;"
         "  overflow: hidden;"
-        "  box-shadow: 0 1px 4px alpha(black, 0.12);"
-        "  transition: box-shadow 0.2s;"
+        "  cursor: pointer;"
+        "}"
+        ".thumbnail-card picture {"
+        "  border-radius: 20px;"
+        "}"
+        ".thumb-picture {"
+        "  background: black;"
+        "  border-radius: 20px;"
+        "} "
+        ".thumb-overlay {"
+        "  border-radius: 20px;"
+        "  overflow: hidden;"
         "}"
         ".thumbnail-btn:hover {"
         "  box-shadow: 0 4px 20px alpha(black, 0.25);"
@@ -1326,28 +1545,87 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
         "  box-shadow: 0 0 0 2px rgba(180,50,50,0.5), 0 1px 4px alpha(black, 0.12);"
         "}"
         ".thumb-info-bar {"
-        "  padding: 4px 8px;"
-        "  background: linear-gradient(to top, alpha(black, 0.65), transparent);"
+        "  border-radius: 0 0 20px 20px;"
+        "  background: alpha(black, 0.75);"
+        "  opacity: 0;"
+        "  transition: opacity 0.2s ease;"
         "}"
-        ".thumb-res { font-size: 0.8em; color: white; }"
+        ".thumbnail-card:hover .thumb-info-bar {"
+        "  opacity: 1;"
+        "}"
+        ".thumb-size {"
+        "  font-size: 1em;"
+        "  color: white;"
+        "  font-weight: bold;"
+        "}"
+        ".thumb-views {"
+        "  font-size: 1em;"
+        "  color: rgba(255,255,255,0.7);"
+        "}"
+        ".thumb-icon {"
+        "  color: white;"
+        "  -gtk-icon-size: 16px;"
+        "} "
+        ".res-badge-bg {"
+        "  background: alpha(black, 0.6);"
+        "  border-radius: 20px;"
+        "}"
+        ".res-badge-label {"
+        "  font-size: 1em;"
+        "  font-weight: bold;"
+        "  color: white;"
+        "}"
         ".thumb-stat { font-size: 0.75em; color: rgba(255,255,255,0.7); }"
-        ".preview-close { background: alpha(black, 0.45); color: white; min-width: 36px; min-height: 36px; }"
-        ".preview-close:hover { background: alpha(red, 0.7); }"
+        ".preview-close { background: alpha(black, 0.75); color: white; min-width: 36px; min-height: 36px; }"
+        ".preview-close:hover { background: alpha(red, 0.9); }"
+        ".preview-overlay {"
+        "  border-radius: 20px;"
+        "  overflow: hidden;"
+        "}"
+        ".preview-bottom-bar button { background: alpha(black, 0.8); color: white; min-width: 42px; min-height: 42px; }"
+        ".preview-bottom-bar button:hover { background: alpha(black, 0.1); }"
         ".preview-bottom-bar {"
         "  padding: 10px 16px;"
-        "  background: linear-gradient(to top, alpha(black, 0.75), alpha(black, 0.4), transparent);"
+        "  background: alpha(black, 0.75);"
         "}"
         ".preview-res { color: white; font-size: 1.1em; font-weight: bold; }"
         ".preview-stats { color: rgba(255,255,255,0.65); font-size: 0.85em; }"
-        ".filter-bar { background: alpha(currentColor, 0.04); border-bottom: 1px solid alpha(currentColor, 0.06); }"
-        ".filter-bar button.toggle { padding: 4px 12px; border-radius: 99px; font-size: 0.85em; }"
+        ".filter-bar { }"
+        ".filter-group {"
+        "  background: alpha(currentColor, 0.05);"
+        "  border-radius: 8px;"
+        "  padding: 4px 8px;"
+        "}"
+        ".filter-label {"
+        "  font-size: 0.8em;"
+        "  font-weight: bold;"
+        "  opacity: 0.5;"
+        "  margin-right: 2px;"
+        "}"
         ".tag-sketchy { color: #b8a028; }"
-        ".tag-nsfw { color: #b43232; }");
+        ".tag-nsfw { color: #b43232; }"
+        ".success-toast {"
+        "  background: alpha(black, 0.85);"
+        "  border-radius: 20px;"
+        "  padding: 24px 32px;"
+        "}"
+        ".success-toast-label {"
+        "  font-size: 1.1em;"
+        "  font-weight: bold;"
+        "  color: white;"
+        "}"
+        "flowboxchild { padding: 0; margin: 0; border: none; outline: none; }");
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
         GTK_STYLE_PROVIDER(css),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css);
+
+    /* Global Esc handler to close preview from main window */
+    GtkEventController *global_esc = gtk_event_controller_key_new();
+    g_signal_connect(global_esc, "key-pressed",
+        G_CALLBACK(on_main_esc), app);
+    gtk_widget_add_controller(win, global_esc);
 
     /* main vertical box */
     GtkWidget *main_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1387,49 +1665,80 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_box_append(GTK_BOX(search_box), search_btn);
 
     /* ---- filter bar ---- */
-    GtkWidget *filter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *filter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_set_margin_start(filter_box, 10);
     gtk_widget_set_margin_end(filter_box, 10);
     gtk_widget_set_margin_top(filter_box, 4);
     gtk_widget_set_margin_bottom(filter_box, 6);
+    gtk_widget_set_halign(filter_box, GTK_ALIGN_CENTER);
     gtk_widget_add_css_class(filter_box, "filter-bar");
     gtk_box_append(GTK_BOX(main_vbox), filter_box);
 
-    /* categories — toggle buttons */
+    /* ---- categories group ---- */
+    GtkWidget *cat_group = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(cat_group, "filter-group");
+    gtk_box_append(GTK_BOX(filter_box), cat_group);
+
+    GtkWidget *cat_label = gtk_label_new("Categories");
+    gtk_widget_add_css_class(cat_label, "filter-label");
+    gtk_box_append(GTK_BOX(cat_group), cat_label);
+
+    GtkWidget *cat_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_append(GTK_BOX(cat_group), cat_sep);
+
     app->cat_general = gtk_toggle_button_new_with_label("General");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->cat_general), cfg->cat_general);
     g_signal_connect(app->cat_general, "toggled", G_CALLBACK(on_category_toggled), app);
-    gtk_box_append(GTK_BOX(filter_box), app->cat_general);
+    gtk_box_append(GTK_BOX(cat_group), app->cat_general);
 
     app->cat_anime = gtk_toggle_button_new_with_label("Anime");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->cat_anime), cfg->cat_anime);
     g_signal_connect(app->cat_anime, "toggled", G_CALLBACK(on_category_toggled), app);
-    gtk_box_append(GTK_BOX(filter_box), app->cat_anime);
+    gtk_box_append(GTK_BOX(cat_group), app->cat_anime);
 
     app->cat_people = gtk_toggle_button_new_with_label("People");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->cat_people), cfg->cat_people);
     g_signal_connect(app->cat_people, "toggled", G_CALLBACK(on_category_toggled), app);
-    gtk_box_append(GTK_BOX(filter_box), app->cat_people);
+    gtk_box_append(GTK_BOX(cat_group), app->cat_people);
 
-    /* purity — toggle buttons with color hints */
+    /* ---- purity group ---- */
+    GtkWidget *pur_group = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(pur_group, "filter-group");
+    gtk_box_append(GTK_BOX(filter_box), pur_group);
+
+    GtkWidget *pur_label = gtk_label_new("Purity");
+    gtk_widget_add_css_class(pur_label, "filter-label");
+    gtk_box_append(GTK_BOX(pur_group), pur_label);
+
+    GtkWidget *pur_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_append(GTK_BOX(pur_group), pur_sep);
+
     app->pur_sfw = gtk_toggle_button_new_with_label("SFW");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->pur_sfw), cfg->pur_sfw);
     g_signal_connect(app->pur_sfw, "toggled", G_CALLBACK(on_category_toggled), app);
-    gtk_box_append(GTK_BOX(filter_box), app->pur_sfw);
+    gtk_box_append(GTK_BOX(pur_group), app->pur_sfw);
 
     app->pur_sketchy = gtk_toggle_button_new_with_label("Sketchy");
     gtk_widget_add_css_class(app->pur_sketchy, "tag-sketchy");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->pur_sketchy), cfg->pur_sketchy);
     g_signal_connect(app->pur_sketchy, "toggled", G_CALLBACK(on_category_toggled), app);
-    gtk_box_append(GTK_BOX(filter_box), app->pur_sketchy);
+    gtk_box_append(GTK_BOX(pur_group), app->pur_sketchy);
 
     app->pur_nsfw = gtk_toggle_button_new_with_label("NSFW");
     gtk_widget_add_css_class(app->pur_nsfw, "tag-nsfw");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app->pur_nsfw), cfg->pur_nsfw);
     g_signal_connect(app->pur_nsfw, "toggled", G_CALLBACK(on_category_toggled), app);
-    gtk_box_append(GTK_BOX(filter_box), app->pur_nsfw);
+    gtk_box_append(GTK_BOX(pur_group), app->pur_nsfw);
 
     /* sorting */
+    GtkWidget *sort_group = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(sort_group, "filter-group");
+    gtk_box_append(GTK_BOX(filter_box), sort_group);
+
+    GtkWidget *sort_label = gtk_label_new("Sort");
+    gtk_widget_add_css_class(sort_label, "filter-label");
+    gtk_box_append(GTK_BOX(sort_group), sort_label);
+
     static const char *sort_options[] = {
         "Date Added", "Relevance", "Random", "Views", "Favorites", "Top List", NULL
     };
@@ -1437,7 +1746,7 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_drop_down_set_selected(GTK_DROP_DOWN(app->sort_combo), cfg->sort_index);
     g_signal_connect(app->sort_combo, "notify::selected",
                      G_CALLBACK(on_sort_changed), app);
-    gtk_box_append(GTK_BOX(filter_box), app->sort_combo);
+    gtk_box_append(GTK_BOX(sort_group), app->sort_combo);
 
     /* top range (hidden unless sorting is toplist) */
     static const char *top_options[] = {
@@ -1448,9 +1757,17 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_widget_set_visible(app->top_range_combo, cfg->sort_index == 5);
     g_signal_connect(app->top_range_combo, "notify::selected",
                      G_CALLBACK(on_top_range_changed), app);
-    gtk_box_append(GTK_BOX(filter_box), app->top_range_combo);
+    gtk_box_append(GTK_BOX(sort_group), app->top_range_combo);
 
     /* aspect ratio */
+    GtkWidget *ratio_group = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(ratio_group, "filter-group");
+    gtk_box_append(GTK_BOX(filter_box), ratio_group);
+
+    GtkWidget *ratio_label = gtk_label_new("Ratio");
+    gtk_widget_add_css_class(ratio_label, "filter-label");
+    gtk_box_append(GTK_BOX(ratio_group), ratio_label);
+
     const char *ratio_options[] = {
         "Any", "16:9", "16:10", "21:9", "32:9", "48:9",
         "9:16", "10:16", "9:18", "1:1", "3:2", "4:3", "5:4", NULL
@@ -1459,9 +1776,17 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_drop_down_set_selected(GTK_DROP_DOWN(app->ratio_combo), cfg->ratio_index);
     g_signal_connect(app->ratio_combo, "notify::selected",
                      G_CALLBACK(on_ratio_changed), app);
-    gtk_box_append(GTK_BOX(filter_box), app->ratio_combo);
+    gtk_box_append(GTK_BOX(ratio_group), app->ratio_combo);
 
     /* minimum resolution */
+    GtkWidget *res_group = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(res_group, "filter-group");
+    gtk_box_append(GTK_BOX(filter_box), res_group);
+
+    GtkWidget *res_label = gtk_label_new("Min res");
+    gtk_widget_add_css_class(res_label, "filter-label");
+    gtk_box_append(GTK_BOX(res_group), res_label);
+
     app->res_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(app->res_entry), "1920×1080");
     gtk_widget_set_size_request(app->res_entry, 105, -1);
@@ -1470,7 +1795,7 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
         gtk_editable_set_text(GTK_EDITABLE(app->res_entry), cfg->min_resolution);
     g_signal_connect(app->res_entry, "activate",
                      G_CALLBACK(on_resolution_activate), app);
-    gtk_box_append(GTK_BOX(filter_box), app->res_entry);
+    gtk_box_append(GTK_BOX(res_group), app->res_entry);
 
     /* ---- scrolled results ---- */
     GtkWidget *scrolled = gtk_scrolled_window_new();
@@ -1483,8 +1808,11 @@ wh_window_new(GtkApplication *gtk_app, AppConfig *cfg)
     gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(app->flowbox), 99);
     gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(app->flowbox), GTK_SELECTION_NONE);
     gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(app->flowbox), FALSE);
-    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(app->flowbox), 10);
-    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(app->flowbox), 10);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(app->flowbox), 16);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(app->flowbox), 16);
+    gtk_widget_set_halign(app->flowbox, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(app->flowbox, GTK_ALIGN_START);
+    gtk_widget_set_hexpand(app->flowbox, TRUE);
 
     /* overlay spinner on flowbox */
     GtkWidget *overlay = gtk_overlay_new();

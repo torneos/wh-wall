@@ -289,21 +289,16 @@ wallpaper_set_as_background(const char *path, int method)
 }
 
 /* ------------------------------------------------------------------ */
-/* copy to clipboard                                                   */
+/* open in browser                                                     */
 /* ------------------------------------------------------------------ */
 void
-wallpaper_copy_to_clipboard(const char *path)
+wallpaper_open_in_browser(const char *id)
 {
-    if (!path) return;
-
-    /* Use xclip or wl-clipboard */
-    char *cmd = g_strdup_printf(
-        "if command -v wl-copy >/dev/null 2>&1; then "
-        "  wl-copy < \"%s\"; "
-        "elif command -v xclip >/dev/null 2>&1; then "
-        "  xclip -selection clipboard -t image/png < \"%s\"; "
-        "fi",
-        path, path);
+    if (!id) return;
+    char *url = g_strdup_printf("https://wallhaven.cc/w/%s", id);
+    char *cmd = g_strdup_printf("xdg-open \"%s\" 2>/dev/null", url);
+    log_info("Opening browser: %s", url);
     system(cmd);
     g_free(cmd);
+    g_free(url);
 }
